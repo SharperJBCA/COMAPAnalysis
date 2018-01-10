@@ -18,7 +18,7 @@ import jdcal
 from scipy.interpolate import interp1d
 
 
-def AtmosFits(el, tod, stepSize, PlotDir=None, DataFile='Anon'):
+def AtmosFits(jd, el, tod, stepSize, PlotDir=None, DataFile='Anon'):
     '''
     AtmosFits - Linear fit for atmosphere in data and subtract model
 
@@ -32,6 +32,7 @@ def AtmosFits(el, tod, stepSize, PlotDir=None, DataFile='Anon'):
 
     offsets    = np.zeros(nSteps)
     gradients  = np.zeros(nSteps)
+    mjds       = np.zeros(nSteps)
 
     ze = 1./np.sin(el*np.pi/180.)
 
@@ -46,8 +47,7 @@ def AtmosFits(el, tod, stepSize, PlotDir=None, DataFile='Anon'):
 
         offsets[i] = pfit[0]
         gradients[i] = pfit[1]
-
-        tod -= pfit(ze)
+        mjds[i] = np.mean(jd[i*stepSize:high])
         
         pyplot.clf()
         if not isinstance(PlotDir, type(None)):        
@@ -61,8 +61,10 @@ def AtmosFits(el, tod, stepSize, PlotDir=None, DataFile='Anon'):
             pyplot.savefig('{}/{}_AtmosFit_{:04d}.png'.format(PlotDir, DataFile, int(i)))
             pyplot.clf()
 
+        tod[i*stepSize:high] -= pfit(ze[i*stepSize:high])
+
     if not isinstance(PlotDir, type(None)):        
-        pyplot.plot(gradients,'o')
+        pyplot.plot(mjds - int(mjds[0]), gradients,'o')
         pyplot.title('{} Fitted Amplitudes'.format(DataFile))
         pyplot.savefig('{}/{}_FittedAmps.png'.format(PlotDir, DataFile))
         pyplot.clf()
@@ -75,7 +77,6 @@ def TimeString2JD(time):
     return jd + float(ts[3])/24. + float(ts[4])/24./60. + float(ts[5])/24./3600.
 
 
-# define az bins
 params = sys.argv[1]
 Config = ConfigParser.ConfigParser()
 Config.read(params)
@@ -128,14 +129,17 @@ lon = Config.getfloat('Telescope', 'Longitude')
 ra, dec =Coordinates._hor2equ(rCoords[1], rCoords[0], todjd, lat, lon)
 
 # Plot RA DEC Positions
-if ~isinstance(PlotDir, type(None)):   
+if not isinstance(PlotDir, type(None)):   
     pyplot.clf()
     pyplot.plot(ra, dec,'.')
     pyplot.xlabel('Right Ascension')
     pyplot.ylabel('Declination')
     pyplot.savefig('{}/{}_RADec.png'.format(PlotDir, DataFile))
             
-AtmosFits(rCoords[0], tod, int((4*60 + 5)/20e-3))
+AtmosFits(todjd, rCoords[0], tod, 
+          Config.getint('Atmosphere', 'stepSize'),
+          PlotDir=PlotDir,
+          DataFile=Config.get('Inputs', 'DataFile'))
 
 # Setup WCS
 cdelt = [Config.getfloat('Observation', 'cdelt1'), Config.getfloat('Observation', 'cdelt2')]
@@ -149,8 +153,18 @@ npix = naxis[0]*naxis[1]
 bl  = Config.getint('Inputs', 'baseline')
 baselines  = np.arange(tod.size).astype('int')//bl
 mask = np.ones(tod.size)
+mask[:Config.getint('Inputs', 'maskStart')] = 0
 hitmap, recmap, a0, wroot, vmap = Control.Run(mask, mask.astype('int'), pix, baselines.astype('int') ,npix, threads=6, submean=False, noavg=True)
 outputmap, recmap, a0, wroot, vmap = Control.Run(tod, mask.astype('int'), pix, baselines.astype('int') ,npix, threads=6)
+
+gd = (mask[::bl] != 0)
+afit = np.poly1d(np.polyfit(np.arange(a0.size)[gd], a0[gd], 2))
+
+a0 -= afit(np.arange(a0.size))
+tod -= np.repeat(a0, bl)
+
+recmap, v2, v3, v4, vmap = Control.Run(tod, mask.astype('int'), pix, baselines.astype('int') ,npix, threads=6, destripe=False)
+wroot, v2, v3, v4, vmap = Control.Run( np.repeat(a0, bl), mask.astype('int'), pix, baselines.astype('int') ,npix, threads=6, destripe=False)
 
 # Regrid data into 2D images:
 recmap[recmap == 0] = np.nan
