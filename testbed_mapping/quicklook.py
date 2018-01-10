@@ -17,6 +17,8 @@ import jdcal
 
 from scipy.interpolate import interp1d
 
+from PowerSpectra import PowerSpectrum
+
 
 def AtmosFits(jd, el, tod, stepSize, PlotDir=None, DataFile='Anon'):
     '''
@@ -117,12 +119,22 @@ el = encfile['comap']['pointing']['elEncoder'][...]
 jd = encfile['comap']['pointing']['MJD'][...] + 2400000.5
 encfile.close()
 
+# Power Spectrum of elevation
+ze_freqs, ze_ps = PowerSpectrum(1./np.sin(el*np.pi/180.), 
+                                Config.getint('PowerSpectra', 'stepSize')*Config.getint('Observation', 'encsr'),
+                                Config.getint('PowerSpectra', 'iStart')*Config.getint('Observation', 'encsr'),
+                                Config.getint('PowerSpectra', 'iTime')*Config.getint('Observation', 'encsr'),
+                                Config.getint('Observation', 'encsr'))
+
+
 # Interpolate encoder data to receiver sample rate
 coords = [el, az]
 rCoords = []
 for c in coords:
     pmdl = interp1d(jd, c, bounds_error=False, fill_value=0)
     rCoords += [pmdl(todjd)]
+
+
 
 lat = Config.getfloat('Telescope', 'Latitude')
 lon = Config.getfloat('Telescope', 'Longitude')
@@ -136,10 +148,26 @@ if not isinstance(PlotDir, type(None)):
     pyplot.ylabel('Declination')
     pyplot.savefig('{}/{}_RADec.png'.format(PlotDir, DataFile))
             
+# Pre atmospheric and Destriping tod spectrum
+itod_freqs, itod_ps = PowerSpectrum(tod, 
+                                  Config.getint('PowerSpectra', 'stepSize')*Config.getint('Observation', 'todsr'),
+                                  Config.getint('PowerSpectra', 'iStart')*Config.getint('Observation', 'todsr'),
+                                  Config.getint('PowerSpectra', 'iTime')*Config.getint('Observation', 'todsr'),
+                                  Config.getint('Observation', 'todsr'))
+
+
 AtmosFits(todjd, rCoords[0], tod, 
           Config.getint('Atmosphere', 'stepSize'),
           PlotDir=PlotDir,
           DataFile=Config.get('Inputs', 'DataFile'))
+
+# Atmosphere corrected spectrum
+atod_freqs, atod_ps = PowerSpectrum(tod, 
+                                    Config.getint('PowerSpectra', 'stepSize')*Config.getint('Observation', 'todsr'),
+                                    Config.getint('PowerSpectra', 'iStart')*Config.getint('Observation', 'todsr'),
+                                    Config.getint('PowerSpectra', 'iTime')*Config.getint('Observation', 'todsr'),
+                                    Config.getint('Observation', 'todsr'))
+
 
 # Setup WCS
 cdelt = [Config.getfloat('Observation', 'cdelt1'), Config.getfloat('Observation', 'cdelt2')]
@@ -162,6 +190,36 @@ afit = np.poly1d(np.polyfit(np.arange(a0.size)[gd], a0[gd], 2))
 
 a0 -= afit(np.arange(a0.size))
 tod -= np.repeat(a0, bl)
+
+dtod_freqs, dtod_ps = PowerSpectrum(tod, 
+                                    Config.getint('PowerSpectra', 'stepSize')*Config.getint('Observation', 'todsr'),
+                                    Config.getint('PowerSpectra', 'iStart')*Config.getint('Observation', 'todsr'),
+                                    Config.getint('PowerSpectra', 'iTime')*Config.getint('Observation', 'todsr'),
+                                    Config.getint('Observation', 'todsr'))
+
+
+# Plot mean power spectra:
+if not isinstance(PlotDir, type(None)):   
+    pyplot.plot(ze_freqs[:ze_ps.size//2], 
+                (ze_ps/np.median(ze_ps))[:ze_ps.size//2], 
+                label='Elevation', linewidth=3)
+    pyplot.plot(itod_freqs[:itod_ps.size//2],
+                (itod_ps/np.median(itod_ps))[:itod_ps.size//2], 
+                label='Input Data', linewidth=2)
+    pyplot.plot(atod_freqs[:atod_ps.size//2], 
+                (atod_ps/np.median(atod_ps))[:atod_ps.size//2], 
+                label='Atmosphere Corrected', linewidth=2)
+    pyplot.plot(dtod_freqs[:dtod_ps.size//2], 
+                (dtod_ps/np.median(dtod_ps))[:dtod_ps.size//2], 
+                label='Destriped + Atmosphere Corrected', linewidth=2)
+    pyplot.yscale('log')
+    pyplot.xscale('log')
+    pyplot.xlabel('Frequency (Hz)')
+    pyplot.ylabel(r'Power')
+    pyplot.title('comap_ncp_1264')
+    pyplot.legend(loc='best')
+    pyplot.savefig('{}/{}_MeanPowerSpectra.png'.format(PlotDir, DataFile))
+
 
 recmap, v2, v3, v4, vmap = Control.Run(tod, mask.astype('int'), pix, baselines.astype('int') ,npix, threads=6, destripe=False)
 wroot, v2, v3, v4, vmap = Control.Run( np.repeat(a0, bl), mask.astype('int'), pix, baselines.astype('int') ,npix, threads=6, destripe=False)
