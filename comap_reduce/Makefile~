@@ -1,0 +1,27 @@
+QUIJOTEFCOMP=ifort
+QUIJOTEINC=-I/scratch/nas_falcon/scratch/sharper/QUIJOTE/Pipeline/Mapping/lib/include -I/scratch/nas_falcon/scratch/sharper/QUIJOTE/Pipeline/Mapping/lib/include
+QUIJOTELIB=-L/scratch/nas_falcon/scratch/sharper/QUIJOTE/Pipeline/Mapping/lib/lib -L/scratch/nas_falcon/scratch/sharper/QUIJOTE/Pipeline/Mapping/lib/lib -L/scratch/nas_falcon/scratch/sharper/QUIJOTE/Pipeline/DataAccess/lib
+
+LIBS=-lsla -lhealpix -lcfitsio
+FLAGS=
+
+all: EphemNew Ephem Coordinates Binning
+
+EphemNew:
+
+	f2py -c --f90exec=$(QUIJOTEFCOMP) $(FLAGS) -m EphemNew EphemNew.f90 $(QUIJOTEINC) $(QUIJOTELIB) $(LIBS)
+
+
+Ephem:
+
+	f2py -c --f90exec=$(QUIJOTEFCOMP) $(FLAGS) -m Ephem Ephem.f90 $(QUIJOTEINC) $(QUIJOTELIB) $(LIBS)
+
+Coordinates:
+
+	f2py -c --f90exec=$(QUIJOTEFCOMP) $(FLAGS) -m Coordinates_tpoint Coordinates_tpoint.f90 $(QUIJOTEINC) $(QUIJOTELIB) $(LIBS)
+
+	f2py -c --f90exec=$(QUIJOTEFCOMP) $(FLAGS) -m Coordinates Coordinates.f90 $(QUIJOTEINC) $(QUIJOTELIB) $(LIBS)
+
+Binning:
+
+	f2py -c --f90exec=$(QUIJOTEFCOMP) $(FLAGS) -m Binning Binning.f90 $(QUIJOTEINC) $(QUIJOTELIB) $(LIBS)

@@ -1,0 +1,14 @@
+# BASIC USE:
+
+1) I recommend that you first copy the contents of this directory to a different working directory.
+
+2) Next run the Makefile to compile the ephemeris library.
+> make all
+
+3) Create an outputs directory (by default this is "outputs" in the Parameter_Default.ini file).
+
+4) Point the Parameter file to the data directory:
+/scratch/nas_falcon/scratch/sharper/COMAP/testbed/data
+
+5) There are lots of switches in the Parameters_Default.ini. You will want to modify the atmosphere section + the Atmosphere.py to do you analysis of the skydips.
+
