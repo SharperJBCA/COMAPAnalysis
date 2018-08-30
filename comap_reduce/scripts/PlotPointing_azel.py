@@ -38,12 +38,14 @@ r = np.zeros((len(filenames)))
 
 
 fwhm = np.zeros((4,32,2, 2, len(filenames)))
+fwhmErrs = np.zeros((4,32,2, 2, len(filenames)))
 outputs = np.zeros((4,2,len(filenames)))
 az, el = np.zeros(filenames.size), np.zeros(filenames.size)
 horn = 1
 hornID = [1,12]
 markers = ['x','o']
 for i, filename in enumerate(filenames):
+    print(filename)
     d = FileTools.ReadH5Py(filename)
     P = d['TODFits']
 
@@ -51,7 +53,9 @@ for i, filename in enumerate(filenames):
         amps[i,:] = d['TODFits'][horn,:,:,0].flatten()
         rms[i,:] = d['TODFits'][horn,:,:,-1].flatten()
               
+        # sideband, frequency, x/y, horn, date
         fwhm[:,:,:,horn, i] = d['TODFits'][horn,:,:,1:3]
+        fwhmErrs[:,:,:,horn, i] = d['TODFitsErrors'][horn,:,:,1:3]
 
         #print(d.keys())
         r[i] = d['Jupiter'][2]
@@ -79,17 +83,36 @@ pyplot.colorbar(label='Elevation')
 pyplot.savefig('Pointing_AzEl_PreFit_El_H{}.png'.format(hornID[horn]))
 pyplot.show()
 
+# Flip Sidbands
 fwhm[:,0:32,:] = (fwhm[:,0:32,:])[:,::-1,:]
 fwhm[:,32*2:32*3,:] = (fwhm[:,32*2:32*3,:])[:,::-1,:]
+fwhmErrs[:,0:32,:] = (fwhmErrs[:,0:32,:])[:,::-1,:]
+fwhmErrs[:,32*2:32*3,:] = (fwhmErrs[:,32*2:32*3,:])[:,::-1,:]
 
-r1 = np.sqrt(np.mean(fwhm[:,:,0,0,:],axis=-1).flatten()**2 + np.mean(fwhm[:,:,1,0,:],axis=-1).flatten()**2)*2.355*60.
-#r1 = (np.mean(fwhm[:,:,0,0,:],axis=-1).flatten() + np.mean(fwhm[:,:,1,0,:],axis=-1).flatten())*2.355*60./2.
 
-r12 = np.sqrt(np.mean(fwhm[:,:,0,1,:],axis=-1).flatten()**2 + np.mean(fwhm[:,:,1,1,:],axis=-1).flatten()**2)*2.355*60.
-#r12 = (np.mean(fwhm[:,:,0,1,:],axis=-1).flatten() + np.mean(fwhm[:,:,1,1,:],axis=-1).flatten())*2.355*60./2.
+nbins = 4
+binNu = np.linspace(26,34,nbins+1)
+r1 = np.mean(fwhm[:,:,0,0,:],axis=-1).flatten()
+r1Err = 1./np.mean(1./fwhmErrs[:,:,0,0,:]**2,axis=-1).flatten()
+r12 = np.mean(fwhm[:,:,0,1,:],axis=-1).flatten()
+r12Err = 1./np.mean(1./fwhmErrs[:,:,0,1,:]**2,axis=-1).flatten()
 
-pyplot.plot(nu, r1)
-pyplot.plot(nu, r12)
+print(r1Err)
+r1bin = np.histogram(nu, binNu, weights=r1)[0]/np.histogram(nu, binNu)[0]
+r1binErr = np.histogram(nu, binNu, weights=1./r1Err)[0]/np.histogram(nu, binNu)[0]
+r12bin = np.histogram(nu, binNu, weights=r12)[0]/np.histogram(nu, binNu)[0]
+r12binErr = np.histogram(nu, binNu, weights=1./r12Err)[0]/np.histogram(nu, binNu)[0]
+
+nuBinsMid = (binNu[1:] + binNu[:-1])/2
+#pyplot.plot(nu, r1 *60.)
+#pyplot.plot(nu, r12*60.)
+pyplot.errorbar(nuBinsMid, r1bin *60., yerr=np.sqrt(1./r1binErr)*60, fmt='o')
+pyplot.plot(nuBinsMid, r12bin *60.,'o')
+
+
+pyplot.title('FWHM')
+pyplot.xlabel('Frequency')
+pyplot.ylabel('FWHM (arcmin)')
 pyplot.show()
 for horn in [0,1]:
     ftext = open('1705_AzElOffsets_horn{}_Jupiter.dat'.format(hornID[horn]),'w')
