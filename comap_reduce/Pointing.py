@@ -7,11 +7,16 @@ import EphemNew
 import healpy as hp
 
 # PIXEL INFORMATION TAKEN FROM JAMES' MEMO ON WIKI
-#p = 0.1853 # arcmin mm^-1, inverse of effective focal length
-p = 0.1909 # fitted from jupiter
+p = 0.1853 # arcmin mm^-1, inverse of effective focal length
+
 theta = np.pi/2.
 Rot = np.array([[np.cos(theta), -np.sin(theta)],
                 [-np.sin(theta),-np.cos(theta)]])
+
+pixelOffsets = {0: [0, 0], # pixel 1
+                1: Rot.dot(np.array([-65.00, 112.58])).flatten()} # pixel 12
+pixelOffsets = {0: [0, 0], # pixel 1
+                1: [0, 0]} # pixel 12
 
 pixelOffsets = {0: [0, 0], # pixel 1
                 1: Rot.dot(np.array([-65.00, 112.58])).flatten()} # pixel 12
@@ -33,16 +38,15 @@ def GetSource(source, lon, lat, mjdtod):
     return r0, d0, dist
 
 
-def GetPointing(dfile, pixels, sidebands, lon= -118.2941, lat=37.2314, precess=True):
+def GetPointing(_az, _el, mjdp, mjdtod, pixels, sidebands, lon= -118.2941, lat=37.2314, precess=True):
     """
     Expects a level 1 COMAP data file and returns ra, dec, az, el and mjd for each pixel
 
     Default lon/lat set to COMAP pathfinder telescope
     """
 
-    print(dfile['pointing'].keys())
-    _az, _el, mjdp = dfile['pointing/azActual'][:], dfile['pointing/elActual'][:], dfile['pointing/MJD'][:]
-    mjdtod =  dfile['spectrometer/MJD'][:]
+    #_az, _el, mjdp = dfile['pointing/azActual'][:], dfile['pointing/elActual'][:], dfile['pointing/MJD'][:]
+    #mjdtod =  dfile['spectrometer/MJD'][:]
     
     # Need to map pointing MJD to Spectrometer MJD
     amdl = interp1d(mjdp, _az, bounds_error=False)
