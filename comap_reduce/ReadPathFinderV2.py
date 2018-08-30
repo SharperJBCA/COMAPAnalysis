@@ -124,8 +124,8 @@ if __name__ == "__main__":
     else:
         nLoop = len(filelist)
 
-    pyplot.plot(np.mean(tod[0,0,:,:],axis=0))
-    pyplot.show()
+    #pyplot.plot(np.mean(tod[0,0,:,:],axis=0))
+    #pyplot.show()
 
     # Now loop over each file
     for i in range(nLoop):
@@ -145,6 +145,7 @@ if __name__ == "__main__":
             mjdTOD = dfile['spectrometer/MJD'][:]
             tod = dfile['spectrometer/tod'][pixels, :, :, :]
             tod = tod[:, sidebands,:,:]
+            obs = np.zeros(1)
             dfile.close()
 
         # Split off from here
@@ -209,7 +210,10 @@ if __name__ == "__main__":
         # Fit for the Source in TOD
         if Parameters.getboolean('Fitting', 'fit'):
             print('FITTING JUPITER IN TOD')
-            Pout, errors, crossings = FitSource.FitTOD(tod, ra, dec, obs, r0, d0, prefix)
+            if Parameters.getboolean('Inputs', 'mergeDatafiles'):
+                Pout, errors, crossings = FitSource.FitTOD(tod, ra, dec, obs, r0, d0, prefix, destripe=True)
+            else:
+                Pout, errors, crossings = FitSource.FitTOD(tod, ra, dec, obs, r0, d0, prefix, destripe=False)
 
             # Pout, crossings = FitSource.FitTOD(tod, az, el, meanAz, meanEl, prefix)
             print mjd.shape

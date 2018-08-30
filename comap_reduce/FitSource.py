@@ -102,7 +102,7 @@ def fitJupiter(specTOD, ra, dec, ra_c = 0., dec_c = 0.):
     return amps, errors, rms, ampsSB, np.mean(rdist)
 
 
-def FitTOD(tod, ra, dec, obs, clon, clat, prefix=''):
+def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
     # Beam solid angle aken from James' report on wiki Optics
     nubeam = np.array([26., 33., 40.])
     srbeam = np.array([2.1842e-6, 1.6771e-6, 1.4828e-6])
@@ -113,6 +113,9 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix=''):
     nChans = tod.shape[2]
     nSamps = tod.shape[3]
     nParams = 7 + 2
+
+
+    wcs = Mapping.DefineWCS(naxis, cdelt, crval)
 
     # Crossing indices
     crossings = np.zeros(nHorns)
@@ -146,14 +149,23 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix=''):
         #pyplot.plot(x, y, 'o')
         #pyplot.show()
 
-        pixels = (ypix + nbins*xpix).astype(int)
-        offset = 300
-        gd = (pixels > 0) & (pixels < nbins*nbins-1)
-        m, offsets = Mapping.Destripe(todTemp[gd], pixels[gd], obs[gd], offset, nbins*nbins)
-        m = np.reshape(m, (nbins, nbins)).T 
-        #m = smap/hmap
+        if destripe:
+            pixels = (ypix + nbins*xpix).astype(int)
+            offset = 300
+            gd = (pixels > 0) & (pixels < nbins*nbins-1)
+            m, offsets = Mapping.Destripe(todTemp[gd], pixels[gd], obs[gd], offset, nbins*nbins)
+            m = np.reshape(m, (nbins, nbins)).T 
+            #m = smap/hmap
+        else:
+            #h, wx, wy = np.histogram2d(x,y, (xygrid[0], xygrid[1]))
+            #s, wx, wy = np.histogram2d(x,y, (xygrid[0], xygrid[1]), weights=todTemp)
+            #m = s/h
+            offsets  =0
+            m, hits = Mapping.MakeMapSimple(todTemp, x, y, wcs)
+            m = m/hits
+
         m -= np.nanmedian(m)
-        m /= rmsTemp
+        #m /= rmsTemp
         m[np.isnan(m)] = 0.
 
         #pyplot.plot(ra[i,:], todTemp-offsets,'.')
@@ -196,17 +208,24 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix=''):
         close = (r < 10./60.)
         near  = (r < 25./60.) & (r > 15/60.)
         far   = (r > 15./60.)
-        fitselect = (r < 25./60.)
+        fitselect = (r < 35./60.)
 
         r = np.sqrt((x-x0)**2 + (y-y0)**2)
-        plotselect = (r < 45./60.)
+        plotselect = (r < 120./60.)
 
         for j in range(nSidebands):
             
             for k in range(nChans):
 
-                m, offsets = Mapping.Destripe(tod[i,j,k,gd], pixels[gd], obs[gd], offset, nbins*nbins)
-                m = np.reshape(m, (nbins,nbins)).T
+                if destripe:
+                    m, offsets = Mapping.Destripe(tod[i,j,k,gd], pixels[gd], obs[gd], offset, nbins*nbins)
+                    m = np.reshape(m, (nbins,nbins)).T
+                else:
+                    #h, wx, wy = np.histogram2d(x[:],y[:], (xygrid[0], xygrid[1]))
+                    #s, wx, wy = np.histogram2d(x[:],y[:], (xygrid[0], xygrid[1]), weights=tod[i,j,k,:])
+                    #m = s/h
+                    m, hits = Mapping.MakeMapSimple(tod[i,j,k,:], x, y, wcs)
+                    m = m/hits
 
                 rmdl = np.poly1d(np.polyfit(ra[i,:], tod[i,j,k,:]-offsets,1))
                 dmdl = np.poly1d(np.polyfit(dec[i,:], tod[i,j,k,:]-offsets,1))
@@ -268,7 +287,6 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix=''):
                 ntod = Gauss2d(P1[i,j,k,:nParams], x, y, 0,0)
                 nulltod = Gauss2d(P2, x, y, 0.,0.)
                 otod = tod[i,j,k,:]
-                wcs = Mapping.DefineWCS(naxis, cdelt, crval)
                 omaps, hits = Mapping.MakeMapSimple(otod, x, y, wcs)
                 nmaps, hits = Mapping.MakeMapSimple(ntod, x, y, wcs)
                 nulls, hits = Mapping.MakeMapSimple(nulltod, x, y, wcs)
@@ -338,7 +356,12 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix=''):
                     pyplot.text(0.9,0.9,r'$rms$ = '+'{:.3f}'.format(rms[i,j,k]), ha='right', transform=ax.transAxes) 
                     ax = fig.add_subplot(3,1,2)
                     pyplot.plot(todPlot)
-                    pyplot.plot(Gauss2d(P1[i,j,k,:nParams], x[plotselect], y[plotselect], 0,0))
+
+                    P3 = P1[i,j,k,:nParams]*1.
+                    P3[3] = 0
+                    P3[7:8] = 0
+                    p3Model = Gauss2d(P3, x[plotselect], y[plotselect], 0,0)
+                    pyplot.plot(p3Model - np.nanmedian(p3Model))
                     pyplot.plot(Gauss2d(P2, x[plotselect], y[plotselect], 0,0))
 
                     pyplot.xlabel('Sample')
@@ -350,14 +373,14 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix=''):
                               -naxis[1]/2. * cdelt[1], naxis[1]/2. * cdelt[1]]
                     ax = fig.add_subplot(3,3,7)
                     ax.imshow(m, aspect='auto', extent=extent)
-                    ax.scatter(P1[i,j,k,4], P1[i,j,k,5], marker='o',color='r')
+                    ax.scatter(P1[i,j,k,4], -P1[i,j,k,5], marker='o',color='r')
                     ax = fig.add_subplot(3,3,8)
                     ax.imshow(nmaps/hits, extent=extent)
-                    ax.scatter(P1[i,j,k,4], P1[i,j,k,5], marker='o',color='r')
+                    ax.scatter(P1[i,j,k,4], -P1[i,j,k,5], marker='o',color='r')
 
                     ax = fig.add_subplot(3,3,9)
-                    #ax.imshow(nmaps/hits-m, extent=extent)
-                    ax.scatter(P1[i,j,k,4], P1[i,j,k,5], marker='o',color='r')
+                    ax.imshow(nmaps/hits-m, extent=extent)
+                    ax.scatter(P1[i,j,k,4], -P1[i,j,k,5], marker='o',color='r')
 
                     pyplot.tight_layout(True)
                     pyplot.savefig('TODResidPlots/TODResidual_{}_H{}_S{}_C{}.png'.format(prefix, i,j,k), bbox_inches='tight')
