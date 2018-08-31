@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.optimize import leastsq
+from scipy.optimize import leastsq, fmin
 from matplotlib import pyplot
 from scipy.interpolate import interp1d
 import Pointing
@@ -27,8 +27,8 @@ def Plane(P, x, y):
 
 def Gauss2d(P, x, y, ra_c, dec_c):
     
-    X = (x - ra_c - P[4])
-    Y = (y - dec_c - P[5])
+    X = (x - ra_c - P[2])
+    Y = (y - dec_c - P[3])
     #Xr =  np.cos(P[6]) * X + np.sin(P[6]) * Y
     #Yr = -np.sin(P[6]) * X + np.cos(P[6]) * Y
 
@@ -37,19 +37,40 @@ def Gauss2d(P, x, y, ra_c, dec_c):
     a = (X/P[1])**2
     b = (Y/P[1])**2
 
+    return P[0] * np.exp( - 0.5 * (a + b)) + P[4] + Plane([P[5], P[6]], x, y)
+
+
+def stopGauss2d(P, x, y, ra_c, dec_c):
+    
+    X = (x - ra_c - P[4])
+    Y = (y - dec_c - P[5])
+    Xr =  np.cos(P[6]) * X + np.sin(P[6]) * Y
+    Yr = -np.sin(P[6]) * X + np.cos(P[6]) * Y
+
+    a = (Xr/P[1])**2
+    b = (Yr/P[2])**2
+    #a = (X/P[1])**2
+    #b = (Y/P[1])**2
+
     return P[0] * np.exp( - 0.5 * (a + b)) + P[3] + Plane([P[7], P[8]], x, y)
-
-
 
 def Error(P, x, y, z, ra_c, dec_c):
 
     P[6] = np.mod(P[6], np.pi*2.)
-    if (P[1] > 6./60./2.355) | (P[1] < 0) | (P[2] > 1) | (P[2] < 0) | (P[0] < 0) | (np.sqrt(P[4]**2 + P[5]**2) > 3./60.): # | (np.abs(P[4]-ra_c) > 5./60.) | (np.abs(P[5]-dec_c) > 5./60.):
+    if (P[1] > 6./60./2.355) | (P[1] < 0) | (P[2] > 1) | (P[2] < 0) | (P[0] < 0) | (np.sqrt(P[4]**2 + P[5]**2) > 8./60.): # | (np.abs(P[4]-ra_c) > 5./60.) | (np.abs(P[5]-dec_c) > 5./60.):
         return 0.*z + 1e32
     else:
         return z - Gauss2d(P, x, y, ra_c, dec_c)
 
 
+def ErrorFmin(P, x, y, z, ra_c, dec_c):
+
+    P[6] = np.mod(P[6], np.pi*2.)
+    #if (P[1] > 6./60./2.355) | (P[1] < 0) | (P[2] > 1) | (P[2] < 0) | (P[0] < 0) | (np.sqrt(P[4]**2 + P[5]**2) > 8./60.): # | (np.abs(P[4]-ra_c) > 5./60.) | (np.abs(P[5]-dec_c) > 5./60.):
+    if (P[1] > 6./60./2.355) | (P[1] < 0) | (P[0] < 0) | (np.sqrt(P[2]**2 + P[3]**2) > 8./60.): 
+        return  1e32
+    else:
+        return np.sum((z - Gauss2d(P, x, y, ra_c, dec_c))**2)
 
 def fitJupiter(specTOD, ra, dec, ra_c = 0., dec_c = 0.):
 
@@ -112,14 +133,16 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
     nSidebands = tod.shape[1]
     nChans = tod.shape[2]
     nSamps = tod.shape[3]
-    nParams = 7 + 2
+    nParams = 5 + 2
 
 
-    wcs = Mapping.DefineWCS(naxis, cdelt, crval)
+    wcs, xr, yr = Mapping.DefineWCS(naxis, cdelt, crval)
 
     # Crossing indices
     crossings = np.zeros(nHorns)
 
+
+    # Calculate RMS from adjacent pairs
     splitTOD = (tod[:,:,:,:(nSamps//2) * 2:2] - tod[:,:,:,1:(nSamps//2)*2:2])
     rms = np.std(splitTOD,axis=3)/np.sqrt(2)
 
@@ -174,14 +197,21 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
         #pyplot.show()
 
 
-        r = np.sqrt((xgrid)**2 + (ygrid)**2)        
+        r = np.sqrt((xgrid)**2 + (ygrid)**2)   
+        
         d1 = ImagePeaks(m, r, 4)
         # if len(coords1) > 0:
         #     ximax, yimax = coords1[0]
         # else:
         #     m = median_filter(m, size=(2,2))
+        # Remove background?
+        xgrid2,ygrid2 = np.meshgrid(np.linspace(-d1.shape[0]/2, d1.shape[0]/2, d1.shape[0]), np.linspace(-d1.shape[1]/2, d1.shape[1]/2, d1.shape[1]))
+        background = np.sqrt((xgrid2 - 0)**2 + (ygrid2 - 0)**2) > 25
+        print(d1.shape, xgrid.shape)
+        d1[background] = 0
+        
         ximax, yimax = np.unravel_index(np.argmax(d1), m.shape)
-
+        print(ximax, yimax, np.max(d1))
         #pyplot.imshow(m)
         #pyplot.plot(yimax, ximax,'ow')
         #pyplot.figure()
@@ -201,21 +231,49 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
         #ybins = np.linspace(-4, 4, 60*8+1)
 
         # Just select the near data
-        x0, y0 = xygrid[0][yimax], xygrid[1][ximax]
-        x0, y0 = 0, 0
+        x0, y0 = xr[ximax,yimax], yr[ximax,yimax]
+        #print(x0, y0)
+        #extent = [-naxis[0]/2. * cdelt[0], naxis[0]/2. * cdelt[0], 
+        #          -naxis[1]/2. * cdelt[1], naxis[1]/2. * cdelt[1]]
+
+        #pyplot.figure(figsize=(6,6))
+        #pyplot.imshow(m,extent=extent)
+        #pyplot.scatter(-x0,-y0, marker='o',color='r')
+        #pyplot.show()
+        #pyplot.figure(figsize=(6,6))
+        #pyplot.plot(yr.flatten(),m.flatten(),'-')
+        #pyplot.axvline(y0,color='r')
+        #pyplot.show()
+
+
+        background = np.sqrt((x - x0)**2 + (y - y0)**2) > 30./60.
+        
+        
+
+        #x0, y0 = 0, 0
         r = np.sqrt((x-x0)**2 + (y-y0)**2)
 
         close = (r < 10./60.)
         near  = (r < 25./60.) & (r > 15/60.)
         far   = (r > 15./60.)
-        fitselect = (r < 35./60.)
+        fitselect = (r < 10./60.)
+        time = np.arange(tod.shape[-1])
+
+        #pyplot.plot(time[:],todTemp[:],'.')
+        #pyplot.plot(time[fitselect],todTemp[fitselect],'.')
+        #pyplot.show()
 
         r = np.sqrt((x-x0)**2 + (y-y0)**2)
         plotselect = (r < 120./60.)
-
         for j in range(nSidebands):
             
             for k in range(nChans):
+                
+                rmdl = np.poly1d(np.polyfit(time[background], tod[i,j,k,background]-offsets,2))
+                tod[i,j,k,:] -= (rmdl(time[:]))
+
+                #dmdl = np.poly1d(np.polyfit(dec[i,background], tod[i,j,k,background]-offsets,2))
+                #tod[i,j,k,:] -= ( dmdl(dec[i,:]))
 
                 if destripe:
                     m, offsets = Mapping.Destripe(tod[i,j,k,gd], pixels[gd], obs[gd], offset, nbins*nbins)
@@ -227,8 +285,6 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
                     m, hits = Mapping.MakeMapSimple(tod[i,j,k,:], x, y, wcs)
                     m = m/hits
 
-                rmdl = np.poly1d(np.polyfit(ra[i,:], tod[i,j,k,:]-offsets,1))
-                dmdl = np.poly1d(np.polyfit(dec[i,:], tod[i,j,k,:]-offsets,1))
 
                 #pyplot.plot(ra[i,:], tod[i,j,k,:]-offsets,'.')
                 #pyplot.figure()
@@ -243,7 +299,7 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
                 #pyplot.show()
 
 
-                tod[i,j,k,:] = tod[i,j,k,:] -offsets -(rmdl(ra[i,:])+dmdl(dec[i,:]))
+                tod[i,j,k,:] = tod[i,j,k,:] -offsets #-(rmdl(ra[i,:])+dmdl(dec[i,:]))
                 tod[i,j,k,:] -= np.median(tod[i,j,k,:])
                 fitdata = tod[i,j,k,fitselect]
                 fitra = x[fitselect]
@@ -264,14 +320,26 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
                       4./60./2.355,
                       4./60./2.355,
                       np.median(fitdata),
-                      x0,
+                      -x0,
                       y0,
                       0.,
                       0., 0.]#,0.,0., 0., 0.]
+                P0 = [np.max(fitdata) -np.median(fitdata) ,
+                      4./60./2.355,
+                      -x0,
+                      y0,
+                      np.median(fitdata),
+                      0., 0.]#,0.,0., 0., 0.]
 
-                P1[i,j,k,:nParams], cov_x, info, mesg, s = leastsq(Error, P0, args=(fitra, fitdec, fitdata, 0,0), full_output=True)
+                #P1[i,j,k,:nParams], cov_x, info, mesg, s = leastsq(Error, P0, args=(fitra, fitdec, fitdata, 0,0), full_output=True)
+                fout = fmin(ErrorFmin, P0, maxfun=3000, args=(fitra, fitdec, fitdata, 0,0), full_output=True)
+                P1[i,j,k,:nParams] = fout[0]
+                print(fout)
+                print P0
 
-
+                #pyplot.plot(fitdata)
+                #pyplot.plot(Gauss2d(P0, x[fitselect], y[fitselect], 0,0))
+                #pyplot.show()
                 #pyplot.plot(fitdata)
                 #pyplot.plot(Gauss2d(P1[i,j,k,:nParams], fitra, fitdec, 0,0))
                 #pyplot.show()
@@ -290,6 +358,7 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
                 omaps, hits = Mapping.MakeMapSimple(otod, x, y, wcs)
                 nmaps, hits = Mapping.MakeMapSimple(ntod, x, y, wcs)
                 nulls, hits = Mapping.MakeMapSimple(nulltod, x, y, wcs)
+
 
                 xgrid, ygrid = np.meshgrid(np.arange(naxis[0]), np.arange(naxis[1]))
                 xgrid = (xgrid-naxis[0]/2.)
@@ -322,11 +391,11 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
                 reducedChi = np.sum((tod[i,j,k,plotselect] -  Gauss2d(P1[i,j,k,:nParams], x[plotselect], y[plotselect], 0.,0.))**2/rms[i,j,k]**2)/(nParams-1.)
                 #print('CHI2', origChi, reducedChi, mapChi, mapOrig, reducedChi/origChi)
                 P1[i,j,k,nParams] = rms[i,j,k]
-                if not isinstance(cov_x, type(None)):
-                    resid = np.std(fitdata -  Gauss2d(P1[i,j,k,:nParams], fitra, fitdec, 0.,0.))**2
-                    errors[i,j,k,:] = np.sqrt(np.diag(cov_x)*resid)
-                else:
-                    errors[i,j,k,:] = 0.
+                #if not isinstance(cov_x, type(None)):
+                #    resid = np.std(fitdata -  Gauss2d(P1[i,j,k,:nParams], fitra, fitdec, 0.,0.))**2
+                #    errors[i,j,k,:] = np.sqrt(np.diag(cov_x)*resid)
+                #else:
+                #    errors[i,j,k,:] = 0.
 
 
                 #np.std(tod[i,j,k,fitselect]-Gauss2d(P1[i,j,k,:nParams], x[fitselect], y[fitselect], 0,0))
@@ -343,8 +412,8 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
 
 
                 if (k >= 0):
-                    r2 = np.sqrt((x-P1[i,j,k,4])**2 + (y-P1[i,j,k,5])**2)
-                    plotselect = (r2 < 4./60.)
+                    r2 = np.sqrt((x-P1[i,j,k,2])**2 + (y-P1[i,j,k,3])**2)
+                    plotselect = (r2 < 15./60.)
 
                     ax = fig.add_subplot(3,1,1)
                     todPlot = tod[i,j,k,plotselect]
@@ -373,14 +442,14 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
                               -naxis[1]/2. * cdelt[1], naxis[1]/2. * cdelt[1]]
                     ax = fig.add_subplot(3,3,7)
                     ax.imshow(m, aspect='auto', extent=extent)
-                    ax.scatter(P1[i,j,k,4], -P1[i,j,k,5], marker='o',color='r')
+                    ax.scatter(P1[i,j,k,2], P1[i,j,k,3], marker='o',color='r')
                     ax = fig.add_subplot(3,3,8)
                     ax.imshow(nmaps/hits, extent=extent)
-                    ax.scatter(P1[i,j,k,4], -P1[i,j,k,5], marker='o',color='r')
+                    ax.scatter(P1[i,j,k,2], P1[i,j,k,3], marker='o',color='r')
 
                     ax = fig.add_subplot(3,3,9)
                     ax.imshow(nmaps/hits-m, extent=extent)
-                    ax.scatter(P1[i,j,k,4], -P1[i,j,k,5], marker='o',color='r')
+                    ax.scatter(P1[i,j,k,2], P1[i,j,k,3], marker='o',color='r')
 
                     pyplot.tight_layout(True)
                     pyplot.savefig('TODResidPlots/TODResidual_{}_H{}_S{}_C{}.png'.format(prefix, i,j,k), bbox_inches='tight')
