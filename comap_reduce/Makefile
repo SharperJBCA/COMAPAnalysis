@@ -1,12 +1,14 @@
-QUIJOTEFCOMP=ifort
-QUIJOTEINC=-I/scratch/nas_falcon/scratch/sharper/QUIJOTE/Pipeline/Mapping/lib/include -I/scratch/nas_falcon/scratch/sharper/QUIJOTE/Pipeline/Mapping/lib/include
-QUIJOTELIB=-L/scratch/nas_falcon/scratch/sharper/QUIJOTE/Pipeline/Mapping/lib/lib -L/scratch/nas_falcon/scratch/sharper/QUIJOTE/Pipeline/Mapping/lib/lib -L/scratch/nas_falcon/scratch/sharper/QUIJOTE/Pipeline/DataAccess/lib
+FCOMP=gfortran
 
-LIBS=-lsla -lhealpix -lcfitsio
+INC=-I/Path/to/slalib/include
+LIB=-L/Path/to/slalib/lib
+
+
+LIBS=-lsla 
 FLAGS=
 
 all: EphemNew 
 
 EphemNew:
 
-	f2py -c --f90exec=$(QUIJOTEFCOMP) $(FLAGS) -m EphemNew EphemNew.f90 $(QUIJOTEINC) $(QUIJOTELIB) $(LIBS)
+	f2py -c --f90exec=$(FCOMP) $(FLAGS) -m EphemNew EphemNew.f90 $(INC) $(LIB) $(LIBS)

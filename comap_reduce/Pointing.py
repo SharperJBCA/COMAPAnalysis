@@ -53,10 +53,8 @@ def GetPointing(_az, _el, mjdp, mjdtod, pixels, sidebands, lon= -118.2941, lat=3
     emdl = interp1d(mjdp, _el, bounds_error=False)
 
     _az, _el = amdl(mjdtod), emdl(mjdtod)
-
     # What pixels are in this data file?
     #pixels =  np.unique([s[:-1] for s in dfile['spectrometer/pixels']])
-
     ra, dec = np.zeros((pixels.size, _az.size)), np.zeros((pixels.size, _az.size))
     az, el = np.zeros((pixels.size, _az.size)), np.zeros((pixels.size, _az.size))
     pang = np.zeros((pixels.size, _az.size))

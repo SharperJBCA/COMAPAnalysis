@@ -9,8 +9,11 @@ import CartPix
 import EphemNew
 from scipy.optimize import leastsq
 
-import ConfigParser
-
+try:
+    import ConfigParser
+except ModuleNotFoundError:
+    import configparser as ConfigParser
+    
 from matplotlib import pyplot
 
 # COMAP PIPELINE MODULES
@@ -48,7 +51,7 @@ if __name__ == "__main__":
 
     # First get the list of files
     if Parameters.getboolean('Inputs', 'isfilelist'):
-        filelist = np.loadtxt(Parameters.get('Inputs', 'filename'), ndmin=1, dtype='string')
+        filelist = np.loadtxt(Parameters.get('Inputs', 'filename'), ndmin=1, dtype=str)
     else:
         filelist = [Parameters.get('Inputs', 'filename')]
 
@@ -59,7 +62,7 @@ if __name__ == "__main__":
     pixels = json.loads(Parameters.get('Inputs', 'pixels'))
     pixels = np.array([pixMap[p] for p in pixels]) # put the pixels into data order
     sidebands = json.loads(Parameters.get('Inputs', 'sidebands'))
-
+    print(sidebands)
     # What is the source being observed?
     source = Parameters.get('Inputs', 'source')
 
@@ -85,7 +88,7 @@ if __name__ == "__main__":
             dfile = h5py.File('{}/{}'.format(dataDir,filename),'r')
             count += dfile['spectrometer/tod'].shape[-1]
             countPointing += dfile['pointing/azActual'].shape[0]
-            print dfile['pointing/azActual'].shape[0]
+            print (dfile['pointing/azActual'].shape[0])
             if i == 0:
                 nchans = dfile['spectrometer/tod'].shape[2]
             dfile.close()
@@ -101,9 +104,9 @@ if __name__ == "__main__":
             this['tod'] = dfile['spectrometer/tod'].shape[-1]
             this['point'] = dfile['pointing/azActual'].shape[0]
             print ('READING: {}'.format(filename))
-            print dfile['pointing/azActual'].shape[0]
+            print (dfile['pointing/azActual'].shape[0])
 
-            print this, dfile['pointing/MJD'].shape, dfile['pointing/azActual'].shape, dfile['pointing/elActual'].shape, count, countPointing
+            print (this, dfile['pointing/MJD'].shape, dfile['pointing/azActual'].shape, dfile['pointing/elActual'].shape, count, countPointing)
             # Read in encoder info
             az[last['point']:last['point']+this['point']] = dfile['pointing/azActual'][:]
             el[last['point']:last['point']+this['point']] = dfile['pointing/elActual'][:]
@@ -113,7 +116,7 @@ if __name__ == "__main__":
             mjdTOD[last['tod']:last['tod']+this['tod']] = dfile['spectrometer/MJD'][:]
             obs[last['tod']:last['tod']+this['tod']] = i
             for isideband, sideband in enumerate(sidebands):
-                print isideband, sidebands
+                print (isideband, sidebands)
                 tod[:,sideband,:,last['tod']:last['tod']+this['tod']] = dfile['spectrometer/tod'][pixels, sideband, :, :]
 
             last['tod']   += this['tod'] 
@@ -153,24 +156,27 @@ if __name__ == "__main__":
         # First get the telescope pointings
         if 'JUPITER' in source.upper():
             doPrecess = False
+        elif 'JUPITERSIM' in source.upper():
+            doPrecess = False
         else:
             doPrecess = True
 
         print('GENERATING POINTING')
-        ra, dec, pang, az, el, mjd = Pointing.GetPointing(az, el, mjd, mjdTOD, pixels, sidebands, precess=doPrecess)
-        print(el.shape)
+        ra, dec, pang, az, el, mjd = Pointing.GetPointing(az, el, mjd, mjdTOD, pixels, sidebands, precess=doPrecess, lon=lon, lat=lat)
         nhorns = ra.shape[0]
 
 
-        if 'JUPITER' in source.upper():
+        if  source.upper() == 'JUPITER':
             print('HELLO')
             r0, d0, dist = Pointing.GetSource(source, lon, lat, mjd)
+            dataout['Jupiter'] = np.array([r0,d0,dist])
+        elif 'JUPITERSIM' in source.upper():
+            r0, d0, dist =  225.34744833333335, -16.262374277777777, 5.708
             dataout['Jupiter'] = np.array([r0,d0,dist])
         else:
             dist = 0
             r0, d0 = json.loads(Parameters.get('Inputs', 'sourceRADEC'))
 
-        
         # Calculate the mean az and el of the observation
         #meanAz, meanEl = Pointing.MeanAzEl(r0, d0, mjd, precess=doPrecess)
         #dataout['mAzEl'] = np.array([meanAz, meanEl])
@@ -216,9 +222,9 @@ if __name__ == "__main__":
                 Pout, errors, crossings = FitSource.FitTOD(tod, ra, dec, obs, r0, d0, prefix, destripe=False)
 
             # Pout, crossings = FitSource.FitTOD(tod, az, el, meanAz, meanEl, prefix)
-            print mjd.shape
+            print (mjd.shape)
             crossings = crossings.astype('int')
-            peakaz, peakel = Pointing.MeanAzEl(r0, d0, mjd[crossings], precess=doPrecess)
+            peakaz, peakel = Pointing.MeanAzEl(r0, d0, mjd[crossings], precess=doPrecess, lon=lon, lat=lat)
 
             print(peakaz, peakel)
             print(peakaz.shape)
@@ -243,8 +249,8 @@ if __name__ == "__main__":
                 crval = [r0, d0]
             cdelt = np.array(json.loads(Parameters.get('Mapping','cdelt')))/60.
 
-            minRa = np.min(ra)
-            maxRa = np.max(ra)
+            minRa  = np.min(ra)
+            maxRa  = np.max(ra)
             minDec = np.min(dec)
             maxDec = np.max(dec)
 
@@ -253,7 +259,7 @@ if __name__ == "__main__":
                 print('MEAN RA: {:.2f}, MEAN DEC: {:.2f}'.format(np.mean(ra), np.mean(dec)))
             
 
-            wcs = Mapping.DefineWCS(naxis, cdelt, crval)
+            wcs,_,_ = Mapping.DefineWCS(naxis, cdelt, crval)
             maps, hits = Mapping.MakeMaps(tod, ra, dec, wcs)
             dataout['hits']  = hits
             dataout['maps']  = maps
