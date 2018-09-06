@@ -397,6 +397,10 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
                 print(fout[0])
                 print (P0)
                 print(x0, y0)
+                import corner
+                pyplot.clf()
+                fig = corner.corner(samples)
+                pyplot.show()
                 
                 #pyplot.plot(time[fitselect], fitdata)
                 #pyplot.show()

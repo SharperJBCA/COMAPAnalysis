@@ -12,8 +12,11 @@ def DefineWCS(naxis=[100,100], cdelt=[1./60., 1./60.],
     #crval = [rac, decc]
     #wcs = CartPix.Info2WCS(naxis, cdelt, crval)
     #npix = naxis[0]*naxis[1]
+    ypix, xpix= np.meshgrid(np.arange(naxis[0]), np.arange(naxis[1]))
+    yr, xr = CartPix.pix2ang(naxis, cdelt, crval,  xpix, ypix)
 
-    return wcs
+    xr[xr > 180] -= 360
+    return wcs, xr, yr
 
 def ang2pixWCS(wcs, ra, dec):
     naxis = [int((wcs.wcs.crpix[0]-1.)*2.), int((wcs.wcs.crpix[1]-1.)*2.)]
