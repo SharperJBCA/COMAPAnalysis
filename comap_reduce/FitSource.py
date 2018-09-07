@@ -6,7 +6,7 @@ import Pointing
 from scipy.ndimage.filters import median_filter
 from scipy.ndimage.filters import gaussian_filter,maximum_filter
 from skimage.feature import peak_local_max
-
+import scipy
 
 import emcee
 
@@ -15,6 +15,38 @@ import Mapping
 naxis = [100, 100]
 cdelt = [1./60., 1./60.]
 crval =[0., 0.]
+
+def RemoveBackground(_tod, rms, close, sampleRate=50, cutoff=1.):
+    """
+    Takes the TOD and set of indices describing the location of the source.
+    Fits polynomials beneath the source and then applies a low-pass filter to the full
+    data. It returns this low pass filtered data
+    """
+    time = np.arange(_tod.size)
+    tod = _tod*1.
+    
+    # First we will find the beginning and end samples the source crossings
+    timeFit = time[close]
+    timeZones = (timeFit[1:] - timeFit[:-1])
+    timeSelect= np.where((timeZones > 5))[0]
+    closeIndex = np.where(close)[0]
+    indices = (closeIndex[:-1])[timeSelect]
+    indices = np.concatenate((closeIndex[0:1], indices, (np.where(close)[0][:-1])[timeSelect+1], [closeIndex[-1]]))
+    indices = np.sort(indices)
+                
+    # For each source crossing fit a polynomial using the data just before and after
+    
+    for m in range(indices.size//2):
+        lo, hi = indices[2*m], indices[2*m+1]
+        fitRange = np.concatenate((np.arange(lo-sampleRate,lo), np.arange(hi, hi+sampleRate))).astype(int)
+        dmdl = np.poly1d(np.polyfit(time[fitRange], tod[fitRange],3))
+        tod[lo:hi] = np.random.normal(scale=rms, loc=dmdl(time[lo:hi]))
+                
+    # apply the low-pass filter
+    Wn = cutoff/(sampleRate/2.)
+    b, a = scipy.signal.butter(4, Wn, 'low')
+    background = scipy.signal.filtfilt(b, a, tod[:])
+    return background
 
 def ImagePeaks(image, rgrid, threshold):
     msmooth = [gaussian_filter(image, fsmooth) for fsmooth in [1,3]]
@@ -95,6 +127,38 @@ def lnprob(P, x, y, z, yerr):
     return lp + lnlike(P, x, y, z, yerr)
 
 
+def Gauss2dNoGrad(P, x, y, ra_c, dec_c):
+    
+    X = (x - ra_c - P[2])
+    Y = (y - dec_c - P[3])
+    #Xr =  np.cos(P[6]) * X + np.sin(P[6]) * Y
+    #Yr = -np.sin(P[6]) * X + np.cos(P[6]) * Y
+
+    #a = (Xr/P[1])**2
+    #b = (Yr/P[2])**2
+    a = (X/P[1])**2
+    b = (Y/P[1])**2
+
+    return P[0] * np.exp( - 0.5 * (a + b)) + P[4] 
+    
+def lnlikeNoGrad(P, x, y,z, yerr):
+    model = Gauss2dNoGrad(P, x, y, 0,0)
+    inv_sigma2 = 1.0/(yerr**2)#  + model**2*np.exp(2*lnf))
+    return -0.5*(np.sum((z-model)**2*inv_sigma2 - np.log(inv_sigma2)))
+
+def lnpriorNoGrad(P):
+    A, sig, x0, y0, bkgd = P
+    r = np.sqrt(x0**2 + y0**2)
+    if 0 < A < 1e8 and 0.0 < sig < 10./60./2.355 and 0 < r < 1.0:
+        return 0.0
+    return -np.inf
+
+def lnprobNoGrad(P, x, y, z, yerr):
+    lp = lnpriorNoGrad(P)
+    if not np.isfinite(lp):
+        return -np.inf
+    return lp + lnlikeNoGrad(P, x, y, z, yerr)
+
 def fitJupiter(specTOD, ra, dec, ra_c = 0., dec_c = 0.):
 
     # FIT JUST THE MEAN SIDEBAND SIGNAL
@@ -109,7 +173,7 @@ def fitJupiter(specTOD, ra, dec, ra_c = 0., dec_c = 0.):
     P1sb, s = leastsq(Error, P0, args=(fitra, fitdec, fitdata,ra_c, dec_c))
     
     ampsSB = P1sb[0]
-    rmsSB  = np.std(fitdata-Gauss2d(P1sb, fitra, fitdec))
+    rmsSB  = np.std(fitdata-Gauss2dNoGrad(P1sb, fitra, fitdec))
     
 
     fitselect = (r < 25./60.)
@@ -136,7 +200,7 @@ def fitJupiter(specTOD, ra, dec, ra_c = 0., dec_c = 0.):
 
         amps[:,i] = P1
         if not isinstance(cov_x, type(None)):
-            resid = np.std(fitdata -  Gauss2d(P1, fitra, fitdec, ra_c, dec_c))**2
+            resid = np.std(fitdata -  Gauss2dNoGrad(P1, fitra, fitdec, ra_c, dec_c))**2
             errors[:,i] = np.sqrt(np.diag(cov_x)*resid)
         else:
             errors[:,i] = 0.
@@ -156,7 +220,7 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
     nSidebands = tod.shape[1]
     nChans = tod.shape[2]
     nSamps = tod.shape[3]
-    nParams = 5 + 2
+    nParams = 5 + 0# 2
 
 
     wcs, xr, yr = Mapping.DefineWCS(naxis, cdelt, crval)
@@ -254,7 +318,7 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
         #ybins = np.linspace(-4, 4, 60*8+1)
 
         # Just select the near data
-        y0,x0 = xr[ximax,yimax], yr[ximax,yimax]
+        y0,x0 = -xr[ximax,yimax], yr[ximax,yimax]
         
         print(x0, y0)
         
@@ -277,7 +341,7 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
         #pyplot.plot(tod[0,0,0,:])
         #pyplot.show()
         r = np.sqrt((x-x0)**2 + (y-y0)**2)
-        close = (r < 10./60.)
+        close = (r < 12.5/60.)
         near  = (r < 25./60.) & (r > 15/60.)
         far   = (r > 15./60.)
         fitselect = (r < 20./60.)
@@ -312,49 +376,21 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
             for k in range(nChans):
                 
                 rmdl = np.poly1d(np.polyfit(time[background], tod[i,j,k,background]-offsets,11))
-                tod[i,j,k,:] -= (rmdl(time[:]))
-
-                #dmdl = np.poly1d(np.polyfit(dec[i,background], tod[i,j,k,background]-offsets,2))
-                #tod[i,j,k,:] -= ( dmdl(dec[i,:]))
-
+                todBackground =RemoveBackground(tod[i,j,k,:], rms[i,j,k], close, sampleRate=50, cutoff=1.)
+                
                 if destripe:
                     m, offsets = Mapping.Destripe(tod[i,j,k,gd], pixels[gd], obs[gd], offset, nbins*nbins)
                     m = np.reshape(m, (nbins,nbins)).T
                 else:
-                    #h, wx, wy = np.histogram2d(x[:],y[:], (xygrid[0], xygrid[1]))
-                    #s, wx, wy = np.histogram2d(x[:],y[:], (xygrid[0], xygrid[1]), weights=tod[i,j,k,:])
-                    #m = s/h
                     m, hits = Mapping.MakeMapSimple(tod[i,j,k,:], x, y, wcs)
                     m = m/hits
 
 
-                #pyplot.plot(ra[i,:], tod[i,j,k,:]-offsets,'.')
-                #pyplot.figure()
-                #pyplot.plot(dec[i,:], tod[i,j,k,:]-offsets,'.')
-                #pyplot.show()
-
-                #pyplot.plot(tod[i,j,k,:])
-                #pyplot.plot(offsets)
-                #pyplot.figure()
-                #pyplot.plot(tod[i,j,k,:]-offsets)
-                #pyplot.plot()
-                #pyplot.show()
-
-
-                tod[i,j,k,:] = tod[i,j,k,:] -offsets #-(rmdl(ra[i,:])+dmdl(dec[i,:]))
-                tod[i,j,k,:] -= np.median(tod[i,j,k,:])
+                #tod[i,j,k,:] = tod[i,j,k,:] -offsets #-(rmdl(ra[i,:])+dmdl(dec[i,:]))
+                tod[i,j,k,:] -= todBackground#np.median(tod[i,j,k,:])
                 fitdata = tod[i,j,k,fitselect]
                 fitra = x[fitselect]
                 fitdec= y[fitselect]
-
-                #pyplot.plot(y, tod[i,j,k,:],'-')
-                #pyplot.plot(fitdec, fitdata,'-')
-                #pyplot.axvline(y0,color='k')
-                #pyplot.figure()                
-                #pyplot.plot(x, tod[i,j,k,:],'-')
-                #pyplot.plot(fitra, fitdata,'-')
-                #pyplot.axvline(x0,color='k')
-                #pyplot.show()                
 
                 amax = np.argmax(fitdata)
 
@@ -372,56 +408,38 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
                       y0,
                       np.median(fitdata),
                       0., 0.]#,0.,0., 0., 0.]
+                P0 = [np.max(fitdata) -np.median(fitdata) ,
+                      4./60./2.355,
+                      x0,
+                      y0,
+                      np.median(fitdata)]#,0.,0., 0., 0.]
 
 
                 #P1[i,j,k,:nParams], cov_x, info, mesg, s = leastsq(Error, P0, args=(fitra, fitdec, fitdata, 0,0), full_output=True)
                 #fout = fmin(ErrorFmin, P0, maxfun=3000, args=(fitra, fitdec, fitdata, 0,0), full_output=True)
                 #fout = leastsq(ErrorLstSq, P0, args=(fitra, fitdec, fitdata, 0,0), full_output=True)
-                
+                                
                 ndim, nwalkers = len(P0), 100
                 pos = [np.array(P0) + 1e-4*np.random.randn(ndim) for iwalker in range(nwalkers)]
-                sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, args=(fitra, fitdec, fitdata, rms[0,0,i]))
+                sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprobNoGrad, args=(fitra, fitdec, fitdata, rms[i,j,k]))
                 sampler.run_mcmc(pos, 1200)
                 samples = sampler.chain[:, 500:sampler.chain.shape[1]:3, :].reshape((-1, ndim))
                 
                 fout = np.mean(samples,axis=0), 
-                #import corner
-                #pyplot.clf()
-                #pyplot.hist(samples[:,0], 50)
-                #pyplot.show()
-                #pyplot.plot(sampler.chain[0,:,0])
-                #pyplot.show()
-                #fig = corner.corner(samples)
-                #pyplot.show()
                 P1[i,j,k,:nParams] = fout[0]
                 print(fout[0])
                 print (P0)
                 print(x0, y0)
-                import corner
-                pyplot.clf()
-                fig = corner.corner(samples)
-                pyplot.show()
+                #import corner
+                #pyplot.clf()
+                #fig = corner.corner(samples)
+                #pyplot.show()
                 
-                #pyplot.plot(time[fitselect], fitdata)
-                #pyplot.show()
-
-                #pyplot.plot(fitdata)
-                #pyplot.plot(Gauss2d(P0, x[fitselect], y[fitselect], 0,0))
-                #pyplot.show()
-                #pyplot.plot(fitdata)
-                #pyplot.plot(Gauss2d(P1[i,j,k,:nParams], fitra, fitdec, 0,0))
-                #pyplot.show()
-
-
-                # Capture the RMS
-                #r2 = np.sqrt((x-P1[i,j,k,4])**2 + (y-P1[i,j,k,5])**2)
-                #plotselect = (r2 < 4./60.)
-
                 P2 = P1[i,j,k,:nParams]*1.
                 P2[0] = 0.
 
-                ntod = Gauss2d(P1[i,j,k,:nParams], x, y, 0,0)
-                nulltod = Gauss2d(P2, x, y, 0.,0.)
+                ntod = Gauss2dNoGrad(P1[i,j,k,:nParams], x, y, 0,0)
+                nulltod = Gauss2dNoGrad(P2, x, y, 0.,0.)
                 otod = tod[i,j,k,:]
                 omaps, hits = Mapping.MakeMapSimple(otod, x, y, wcs)
                 nmaps, hits = Mapping.MakeMapSimple(ntod, x, y, wcs)
@@ -441,8 +459,8 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
                 mapOrig = np.nansum(((omaps[getchi]-nulls[getchi])/hits[getchi])**2/maprms**2)/(nParams-1.)
 
                 
-                origChi = np.sum((tod[i,j,k,plotselect] -  Gauss2d(P2, x[plotselect], y[plotselect], 0.,0.))**2/rms[i,j,k]**2)/(nParams-1.)
-                reducedChi = np.sum((tod[i,j,k,plotselect] -  Gauss2d(P1[i,j,k,:nParams], x[plotselect], y[plotselect], 0.,0.))**2/rms[i,j,k]**2)/(nParams-1.)
+                origChi = np.sum((tod[i,j,k,plotselect] -  Gauss2dNoGrad(P2, x[plotselect], y[plotselect], 0.,0.))**2/rms[i,j,k]**2)/(nParams-1.)
+                reducedChi = np.sum((tod[i,j,k,plotselect] -  Gauss2dNoGrad(P1[i,j,k,:nParams], x[plotselect], y[plotselect], 0.,0.))**2/rms[i,j,k]**2)/(nParams-1.)
                 #print('CHI2', origChi, reducedChi, mapChi, mapOrig, reducedChi/origChi)
                 P1[i,j,k,nParams] = rms[i,j,k]
 
@@ -454,7 +472,7 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
                     ax = fig.add_subplot(3,1,1)
                     todPlot = tod[i,j,k,plotselect]
                     todPlot -= np.median(todPlot)
-                    pyplot.plot(todPlot-Gauss2d(P1[i,j,k,:nParams], x[plotselect], y[plotselect], 0,0))
+                    pyplot.plot(todPlot-Gauss2dNoGrad(P1[i,j,k,:nParams], x[plotselect], y[plotselect], 0,0))
                     pyplot.title('Horn {}, Sideband {}, Avg. Channel {} \n {}'.format(i,j,k, prefix))
                     pyplot.xlabel('Sample')
                     pyplot.ylabel('Detector Units')
@@ -465,9 +483,9 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
                     P3 = P1[i,j,k,:nParams]*1.
                     P3[3] = 0
                     P3[7:8] = 0
-                    p3Model = Gauss2d(P3, x[plotselect], y[plotselect], 0,0)
-                    pyplot.plot(Gauss2d(P1[i,j,k,:nParams], x[plotselect], y[plotselect], 0,0))#p3Model - np.nanmedian(p3Model))
-                    pyplot.plot(Gauss2d(P2, x[plotselect], y[plotselect], 0,0))
+                    p3Model = Gauss2dNoGrad(P3, x[plotselect], y[plotselect], 0,0)
+                    pyplot.plot(Gauss2dNoGrad(P1[i,j,k,:nParams], x[plotselect], y[plotselect], 0,0))#p3Model - np.nanmedian(p3Model))
+                    pyplot.plot(Gauss2dNoGrad(P2, x[plotselect], y[plotselect], 0,0))
 
                     pyplot.xlabel('Sample')
                     pyplot.ylabel('Detector Units')
@@ -487,10 +505,11 @@ def FitTOD(tod, ra, dec, obs, clon, clat, prefix='', destripe=False):
                     ax.imshow(nmaps/hits-m, extent=extent)
                     ax.scatter(P1[i,j,k,2], P1[i,j,k,3], marker='o',color='r')
 
-                    pyplot.tight_layout(True)
+                    #pyplot.tight_layout(True)
+                    #pyplot.show()
                     pyplot.savefig('TODResidPlots/TODResidual_{}_H{}_S{}_C{}.png'.format(prefix, i,j,k), bbox_inches='tight')
                     pyplot.clf()
-        cross = np.argmax(Gauss2d(np.median(P1[i,0,:,:nParams],axis=0), x, y, 0,0))
+        cross = np.argmax(Gauss2dNoGrad(np.median(P1[i,0,:,:nParams],axis=0), x, y, 0,0))
         print( cross, nHorns)
         crossings[i] = cross
     return P1, errors, crossings
@@ -593,17 +612,17 @@ def FitTODazel(tod, az, el, maz, mel, ra, dec, clon, clat, prefix=''):
 
                 if (j == 0) & (k == 0):
                     ax = fig.add_subplot(2,1,1)
-                    pyplot.plot(tod[i,j,k,fitselect]-Gauss2d(P1[i,j,k,:nParams], x[fitselect], y[fitselect], 0,0))
+                    pyplot.plot(tod[i,j,k,fitselect]-Gauss2dNoGrad(P1[i,j,k,:nParams], x[fitselect], y[fitselect], 0,0))
                     pyplot.title('Horn {}, Sideband {}, Avg. Channel {} \n {}'.format(i,j,k, prefix))
                     pyplot.xlabel('Sample')
                     pyplot.ylabel('Detector Units')
                     ax = fig.add_subplot(2,1,2)
                     pyplot.plot(tod[i,j,k,fitselect])
-                    pyplot.plot(Gauss2d(P1[i,j,k,:nParams], x[fitselect], y[fitselect], 0,0))
+                    pyplot.plot(Gauss2dNoGrad(P1[i,j,k,:nParams], x[fitselect], y[fitselect], 0,0))
                     pyplot.xlabel('Sample')
                     pyplot.ylabel('Detector Units')
                     pyplot.savefig('TODResidPlots/TODResidual_{}_H{}_S{}_C{}.png'.format(prefix, i,j,k), bbox_inches='tight')
                     pyplot.clf()
-        crossings[i] = np.argmax(Gauss2d(np.mean(P1[i,0,:,:nParams],axis=0), x, y, 0,0))
+        crossings[i] = np.argmax(Gauss2dNoGrad(np.mean(P1[i,0,:,:nParams],axis=0), x, y, 0,0))
 
     return P1, crossings
