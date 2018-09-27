@@ -18,8 +18,24 @@ pixelOffsets = {0: [0, 0], # pixel 1
 pixelOffsets = {0: [0, 0], # pixel 1
                 1: [0, 0]} # pixel 12
 
-pixelOffsets = {0: [0, 0], # pixel 1
-                1: Rot.dot(np.array([-65.00, 112.58])).flatten()} # pixel 12
+pixelOffsets = {0: [0,[0, 0]], # pixel 1
+                2:  [2, Rot.dot(np.array([97.50, 56.29])).flatten()], # Pixel 9
+                3: [3, Rot.dot(np.array([-97.50, 56.29])).flatten()], # Pixel 13
+                5: [5, Rot.dot(np.array([-97.50, -56.29])).flatten()], # Pixel 15
+                12: Rot.dot(np.array([-65.00, 112.58])).flatten()} # pixel 12
+
+
+
+#pixelOffsets = {0: [0,[0, 0]], # pixel 1
+#                1: [1,
+#                2: [2, Rot.dot(np.array([97.50, 56.29])).flatten()], # Pixel 9
+#                3: [3, Rot.dot(np.array([-97.50, 56.29])).flatten()], # Pixel 13
+#                5: [5, Rot.dot(np.array([-97.50, -56.29])).flatten()], # Pixel 15
+#                12: Rot.dot(np.array([-65.00, 112.58])).flatten()} # pixel 12
+
+
+feedpositions = np.loadtxt('COMAP_Feed_Positions.dat')
+pixelOffsets = {k+1: [k, (Rot.dot(f[1:,np.newaxis])).flatten()] for k, f in enumerate(feedpositions)} #k, f enumerate(feedpositions)}
 
 def GetSource(source, lon, lat, mjdtod):
 
@@ -49,10 +65,14 @@ def GetPointing(_az, _el, mjdp, mjdtod, pixels, sidebands, lon= -118.2941, lat=3
     #mjdtod =  dfile['spectrometer/MJD'][:]
     
     # Need to map pointing MJD to Spectrometer MJD
-    amdl = interp1d(mjdp, _az, bounds_error=False)
-    emdl = interp1d(mjdp, _el, bounds_error=False)
+    amdl = interp1d(mjdp, _az, bounds_error=False, fill_value=0)
+    emdl = interp1d(mjdp, _el, bounds_error=False, fill_value=0)
+    print( np.sum(_az), np.sum(_el))
 
     _az, _el = amdl(mjdtod), emdl(mjdtod)
+    #findNan = np.where(np.isnan(_az))[0]
+    #print(findNan)
+    #_az[np.isnan(_az
     # What pixels are in this data file?
     #pixels =  np.unique([s[:-1] for s in dfile['spectrometer/pixels']])
     ra, dec = np.zeros((pixels.size, _az.size)), np.zeros((pixels.size, _az.size))
@@ -60,8 +80,9 @@ def GetPointing(_az, _el, mjdp, mjdtod, pixels, sidebands, lon= -118.2941, lat=3
     pang = np.zeros((pixels.size, _az.size))
     # Calculate RA/DEC for each pixel
     for i, pix in enumerate(pixels):
-        el[i,:] = _el+pixelOffsets[pix][1]/60.*p
-        az[i,:] = _az+pixelOffsets[pix][0]/60.*p/np.cos(el[i,:]*np.pi/180.)
+        print(pix, pixelOffsets[pix][1])
+        el[i,:] = _el+pixelOffsets[pix][1][1]/60.*p
+        az[i,:] = _az+pixelOffsets[pix][1][0]/60.*p/np.cos(el[i,:]*np.pi/180.)
         ra[i,:], dec[i,:] = Coordinates._hor2equ(az[i,:],
                                                  el[i,:],
                                                  mjdtod[:]+2400000.5,
