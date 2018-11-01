@@ -1,0 +1,104 @@
+import numpy as np
+import CartPix
+from matplotlib import pyplot
+
+def DefineWCS(naxis=[100,100], cdelt=[1./60., 1./60.],
+              crval=[0,0]):
+
+    wcs = CartPix.Info2WCS(naxis, cdelt, crval)
+    # Setup WCS
+    xpix, ypix= np.meshgrid(np.arange(naxis[0]), np.arange(naxis[1]),indexing='ij')
+    ypix = ypix[:,::-1]
+    yr, xr = CartPix.pix2ang(naxis, cdelt, crval,  ypix, xpix)
+
+    xr[xr > 180] -= 360
+    return wcs, xr, yr
+
+def ang2pixWCS(wcs, ra, dec):
+    naxis = [int((wcs.wcs.crpix[0]-1.)*2.), int((wcs.wcs.crpix[1]-1.)*2.)]
+
+    pix = CartPix.ang2pix(naxis, wcs.wcs.cdelt, wcs.wcs.crval, ra, dec).astype('int')
+    
+    return pix
+
+def MakeMapSimple(tod, ra, dec, wcs):
+    naxis = [int((wcs.wcs.crpix[0]-1.)*2.), int((wcs.wcs.crpix[1]-1.)*2.)]
+    npix = naxis[0]*naxis[1]
+
+    pixbins = np.arange(0, npix+1)
+
+    pix = ang2pixWCS(wcs, dec, ra).astype('int')
+    h, b = np.histogram(pix, pixbins)
+    hits = np.reshape(h, (naxis[0], naxis[1]))
+    w, b = np.histogram(pix, pixbins, weights=tod)
+    maps = np.reshape(w, (naxis[0], naxis[1]))
+    return maps, hits
+
+
+def MakeMaps(tod, ra, dec, wcs):
+
+    naxis = [int((wcs.wcs.crpix[0]-1.)*2.), int((wcs.wcs.crpix[1]-1.)*2.)]
+    npix = naxis[0]*naxis[1]
+
+    pixbins = np.arange(0, npix+1)
+
+    nhorns = tod.shape[0]
+    nsidebands = tod.shape[1]
+    nchans  = tod.shape[2]
+
+    maps = np.zeros((nhorns, nsidebands, nchans, naxis[1], naxis[0]))
+    hits = np.zeros((nhorns, naxis[1], naxis[0]))
+
+    for i in range(nhorns):
+        pix = ang2pixWCS(wcs, dec[i,:], ra[i,:]).astype('int')
+        h, b = np.histogram(pix, pixbins)
+        hits[i,:,:] = np.reshape(h, (naxis[1], naxis[0]))[:,::-1]
+
+        for j in range(nsidebands):
+            for k in range(nchans):
+                w, b = np.histogram(pix, pixbins, weights=tod[i,j,k,:])
+                maps[i,j,k,:,:] = np.reshape(w, (naxis[1], naxis[0]))[:,::-1]
+    return maps, hits
+
+from Destriper import MapMaker, CG
+
+def Destripe(tod, pixels,  offset, npix, obs=None):
+    """
+    Inputs
+    tod    - receiver data (1D, array-like)
+    pixels - pixel coordinate of each data point (1D, array-like)
+    offset - length of destriping offset
+    npix   - number of pixels total in map
+
+    returns
+    map - 1D array of map values (you must rearrange the pixels yourself)
+    a0  - offsets in time stream
+    """
+    
+    if isinstance(obs, type(None)):
+        obs = np.zeros(tod.size).astype(int)
+
+    assert tod.dtype == float, "TOD values are not floats"
+    assert pixels.dtype == int, "Pixels values are not ints"
+    
+    nobs = int(np.max(obs)) + 1
+    offsets = np.zeros(tod.size)
+    lastOffset = 0
+    for i in range(nobs):
+        offsets[obs == i] = np.arange(len(tod[obs == i]))//offset + lastOffset
+        tod[obs == i] -= np.nanmedian(tod[obs ==i])
+        lastOffset = np.max(offsets) + 1
+
+    offsets = offsets.astype(int)
+    noffsets = int(np.max(offsets)) + 1
+    
+    d1 = MapMaker.DataClass()
+    d1.setData(tod, pixels, offsets, npix, noffsets, offset)
+    CG.CG(d1)
+    
+    d1.unwrapped2 *= 0
+    d1.Unwrap(d1.a0, d1.offsets, d1.unwrapped2)
+    a0 = d1.unwrapped2*1.
+    m = d1.ReturnMap(tod-a0)
+
+    return m, a0

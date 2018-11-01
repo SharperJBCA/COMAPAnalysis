@@ -1,0 +1,21 @@
+# Mapping routines
+
+> MakeMapSimple(tod, ra, dec, wcs)
+
+Pass TOD, ra, and dec + an astropy WCS object and returns a 2D map array
+
+MakeMaps(tod, ra, dec, wcs)
+
+Pass TOD, RA, Dec and astropy WCS object. 
+Expects arrays of:
+TOD - (nhorns, nsidebands, nchannels, nsamples)
+RA  - (nhorns, nsamples)
+DEC - (nhorns, nsamples)
+
+Destripe(tod, pixels,  offset, npix)
+
+Pass TOD and pixels (calculate using WCS routines in Cartpix) as 1D arrays.
+Offset is the destriping parameter (in number of samples)
+npix is the number of pixels in the final map.
+
+returns a 1D map vector that must be rearranged into the correct format.

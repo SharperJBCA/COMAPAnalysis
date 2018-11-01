@@ -1,0 +1,56 @@
+import numpy as np
+from matplotlib import pyplot
+
+
+def CG(Data):
+    '''
+    Returns x for a linear system Ax = b where A is a symmetric, positive-definite matrix.
+
+    Arguments
+    x0  -- Initial guess at x
+    bFunc -- Function describing how to generate b.
+    AXFunc -- Function describing how to generate Ax.    
+    '''
+
+    # Setup bvector
+    Data.b(Data.tod)
+    
+    # Setup initial Ax vector
+    Data.Ax(Data.a0)
+
+    # initial residual
+    r = Data.bVec - Data.AxVec
+    d = Data.bVec - Data.AxVec
+    
+    del0 = np.sum(r**2)
+    delnew = np.sum(r**2)
+    niter = 200
+    for i in range(niter):
+        
+        #print('Rotate Residual')
+        Data.Ax(r)
+
+        sumAd = np.sum(d*Data.AxVec)
+        alpha = delnew/sumAd
+        
+        Data.a0 += alpha*d
+        #r -= alpha*Data.AxVec # approximation doesn't work?
+        #print('Recalc Ax')
+        Data.Ax(Data.a0)
+        r = Data.bVec - Data.AxVec    
+                
+        
+        delold = delnew*1.
+        delnew = np.sum(r**2)
+        
+        beta = delnew/delold
+        
+        d *= beta
+        d += r 
+        
+        print(i, delnew/del0, 1e-10)
+        if delnew/del0 < 1e-10:
+            break
+        
+        
+        

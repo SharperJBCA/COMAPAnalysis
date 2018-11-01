@@ -1,0 +1,23 @@
+# Structure of map-maker:
+
+Parameter_file -> 
+Call: run.py Parameter_file --keywords
+		-| Setup data into contiguous chunks of data (each offset must be great than some limit)
+		-| Pass each node its data. Keep a head/master node free. All processes interact back with master node (e.g., pass it the complete map). The head node then passes back out the pixels needed for that node to continue processing. Head node keeps overhead that describes the mapping of pixels per node to pixels in master map.
+		
+		-| The data in each node is held in a class. Contains:
+			+ Original tod vector
+			+ sig*weight vector
+			+ weight vector
+			+ local pixels
+			+ offset info
+			+ Extra: Offset vector, tod vector, map vector
+		-| The class contains key functions for operating on the data:
+			+ Generalised histogram written in Cython
+			+ Sum to offsets
+			+ Sum to map
+			+ Expand offsets to data
+			+ Expand map to data
+			+ Toeplitz matrix inversion (for the correlated noise matrix)
+			
+		-| Rewrite the conjugate gradient minimisation algorithm.
