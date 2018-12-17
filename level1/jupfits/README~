@@ -1,0 +1,5 @@
+Fitting for Jupiter:
+
+Setup an example script for fitting to Jupiter observations in FitJupObservation.py, this expects a list of files and directory for output fit hdf5 files:
+
+> python FitJupObservation.py --filelist filelist.dat --fitoutputdir outputdir

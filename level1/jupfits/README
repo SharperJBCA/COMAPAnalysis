@@ -1,0 +1,12 @@
+##First:
+
+Open up the Makefile and change the inc and lib paths to point towards your installation of SLALIB.
+
+##Fitting for Jupiter:
+
+Setup an example script for fitting to Jupiter observations in FitJupObservation.py, this expects a list of files and directory for output fit hdf5 files:
+
+> python FitJupObservation.py --filelist filelist.dat --fitoutputdir outputdir
+
+
+@Tim: I basically fit for Jupiter in chunks of TOD passed to the FitTOD() function in FitSource.py, I've coded up an example in the main() loop of FitJupObservation. I'm not entirely sure how your code works so feel free to edit this to interact with your code.
