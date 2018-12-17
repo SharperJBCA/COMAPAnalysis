@@ -69,13 +69,17 @@ def GetPointing(_az, _el, mjdp, mjdtod, pixelOffsets, lon= -118.2941, lat=37.231
         #print(k,i,pix)
         el[i,:] = _el+pix[1][1]
         az[i,:] = _az+pix[1][0]/np.cos(el[i,:]*np.pi/180.) + 4.25/60. # azimuth correction of 4.25 arcmin
-        ra[i,:], dec[i,:] = EphemNew.h2e(az[i,:]*np.pi/180., el[i,:]*np.pi/180., mjdtod, lon*np.pi/180., lat*np.pi/180.)
+        ra[i,:], dec[i,:] = EphemNew.h2e(az[i,:]*np.pi/180., el[i,:]*np.pi/180.,
+                                         mjdtod, comap_lon*np.pi/180., comap_lat*np.pi/180.)
         if precess:
             EphemNew.precess(ra[i,:], dec[i,:], mjdtod)
         #pang[i,:] = Coordinates._pang(el[i,:], dec[i,:]*180./np.pi, lat)
-    
+        pang[i,:] = EphemNew.pa(ra[i,:], dec[i,:],mjdtod, 
+                     comap_lon*np.pi/180.,comap_lat*np.pi/180.)
+
     ra *= 180./np.pi
     dec *= 180./np.pi
+    pang *= 180./np.pi
     return ra, dec, pang, az, el, mjdtod
 
 def MeanAzEl(r0, d0, mjd, lon= -118.2941, lat=37.2314, precess=True):

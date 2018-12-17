@@ -68,11 +68,20 @@ def main(filename, plotDir='Plots/'):
 
     tod = d['spectrometer/tod']
     mjd = d['spectrometer/MJD'][:] 
-    ra  = d['pointing/ra'][...]
-    dec = d['pointing/dec'][...]
-    az = d['pointing/az'][0,:]
-    el = d['pointing/el'][0,:]
+    if len(d['pointing/az'].shape) > 1:
+        az = d['pointing/az'][0,:]
+        el = d['pointing/el'][0,:]
+    else:
+        az = d['pointing/az'][:]
+        el = d['pointing/el'][:]
+
+    mjdpoint = d['pointing/MJD'][:]
+
     slewDist = SlewDistance(az)
+    ra, dec, pa, az, el, mjd = Pointing.GetPointing(az, el, mjd, 
+                                                      mjdpoint, pixelOffsets, 
+                                                      lon=Pointing.comap_lon, 
+                                                      lat=Pointing.comap_lat)
 
     # Calculate data sizes:
     nHorns = tod.shape[0]
@@ -86,14 +95,11 @@ def main(filename, plotDir='Plots/'):
                                        Pointing.comap_lat*np.pi/180.)
 
     EphemNew.precess(clon, clat, mjd[0:1])
-    pa = EphemNew.pa(ra[0,:]*np.pi/180., dec[0,:]*np.pi/180.,mjd, 
-                     Pointing.comap_lon*np.pi/180.,Pointing.comap_lat*np.pi/180.)
-    pa *= 180./np.pi
     # Loop over horns/SBs 
     P1out = None
     prefix = filename.split('/')[-1].split('.')[0]
     for iHorn in range(nHorns):
-        print(iHorn)
+        print('Processing Horn {:d}'.format(iHorn+1))
         _tod = np.nanmean(np.nanmean(tod[iHorn,:,5:-5,:],axis=0),axis=0)
 
         #Tim: Pass this function whatever chunk of time-ordered data you have in memory
@@ -102,7 +108,7 @@ def main(filename, plotDir='Plots/'):
                                                                   dec[0,:], 
                                                                   clon*180./np.pi, 
                                                                   clat*180./np.pi, 
-                                                                  pa, 
+                                                                  pa[0,:], 
                                                                   prefix='{}_Horn{}'.format(prefix, iHorn+1),
                                                                   plotDir=plotDir)
         
@@ -112,10 +118,11 @@ def main(filename, plotDir='Plots/'):
             mout = np.zeros(mweight.shape)
             hout = np.zeros(weight.shape)
 
-        P1out[iHorn, :] = P1
-        Peout[iHorn, :] = P1e
-        mout += mweight*(model+1)**2
-        hout += weight*(model+1)**2
+        if not isinstance(P1, type(None)):
+            P1out[iHorn, :] = P1
+            Peout[iHorn, :] = P1e
+            mout += mweight*(model+1)**2
+            hout += weight*(model+1)**2
 
     pyplot.imshow(mout/hout, extent=[-100/2. * 1.5, 100/2.*1.5,-100/2. * 1.5, 100/2.*1.5] )
     pyplot.xlabel('Az offset (arcmin)')
@@ -152,7 +159,7 @@ if __name__ == "__main__":
             print('Opening',f)
             _P1, _P1e, m, meanMJD, meanEl, meanAz = main(f)
             prefix = f.split('/')[-1].split('.h')[0]
-            output = h5py.File('{}/{}_JupiterFits.h5'.format(fitoutputDir, prefix))
+            output = h5py.File('{}/{}_JupiterFits.h5'.format(args.fitoutputdir, prefix))
             output['P1'] = _P1
             output['P1e'] = _P1e
             coords = np.zeros(3)

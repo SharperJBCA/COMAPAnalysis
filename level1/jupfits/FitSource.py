@@ -4,7 +4,8 @@ from matplotlib import pyplot
 from scipy.interpolate import interp1d
 import Pointing
 from scipy.ndimage.filters import median_filter
-from scipy.ndimage.filters import gaussian_filter,maximum_filter
+from scipy.ndimage.filters import gaussian_filter,maximum_filter, gaussian_filter1d
+from scipy.signal import medfilt
 from skimage.feature import peak_local_max
 import scipy
 
@@ -20,7 +21,7 @@ naxis = [100, 100]
 cdelt = [1.5/60., 1.5/60.]
 crval =[0., 0.]
 
-def RemoveBackground(_tod, rms, close, sampleRate=50, cutoff=1.):
+def RemoveBackground(_tod, rms,x,y, sampleRate=50, cutoff=1.):
     """
     Takes the TOD and set of indices describing the location of the source.
     Fits polynomials beneath the source and then applies a low-pass filter to the full
@@ -28,8 +29,16 @@ def RemoveBackground(_tod, rms, close, sampleRate=50, cutoff=1.):
     """
     time = np.arange(_tod.size)
     tod = _tod*1.
+
+    # initial pass
+    background = medfilt(tod[:], 35)
+    peakarg = np.argmax(tod-background)
+    x0, y0 = x[peakarg], y[peakarg]
+    r = np.sqrt((x-x0)**2 + (y-y0)**2)
+    close = (r < 15./60.)
+
     
-    # First we will find the beginning and end samples the source crossings
+    # First we will find the beginning and end samples of the source crossings
     timeFit = time[close]
     timeZones = (timeFit[1:] - timeFit[:-1])
     timeSelect= np.where((timeZones > 5))[0]
@@ -46,12 +55,15 @@ def RemoveBackground(_tod, rms, close, sampleRate=50, cutoff=1.):
         hi = min([hi, tod.size])
         fitRange = np.concatenate((np.arange(lo-sampleRate,lo), np.arange(hi, hi+sampleRate))).astype(int)
         dmdl = np.poly1d(np.polyfit(time[fitRange], tod[fitRange],3))
+
         tod[lo:hi] = np.random.normal(scale=rms, loc=dmdl(time[lo:hi]))
                 
     # apply the low-pass filter
     Wn = cutoff/(sampleRate/2.)
     b, a = scipy.signal.butter(4, Wn, 'low')
-    background = scipy.signal.filtfilt(b, a, tod[:])
+    background = gaussian_filter1d(tod[:], 55)
+
+    #scipy.signal.filtfilt(b, a, tod[:])
     return background
 
 def ImagePeaks(image, xgrid, ygrid, threshold):
@@ -76,6 +88,7 @@ def CalcRMS(tod):
     rms = np.std(splitTOD,axis=-1)/np.sqrt(2)
     return rms
 
+badval = (None, None, None, None, None, None)
 def FitTOD(tod, ra, dec, clon, clat, cpang, 
            prefix='', 
            normalize=True, 
@@ -115,15 +128,16 @@ def FitTOD(tod, ra, dec, clon, clat, cpang,
     close = (r < 3.) # Check if source is even with 3 degrees of field centre
     if np.sum((r < 6./60.)) < 10:
         print('Source not observed')
-        return None, None, None, None
+        return badval
 
     # Filter background or at least subtract a mean level
     try:
-        todBackground = RemoveBackground(tod, rms, close, sampleRate=50, cutoff=1.)
+        todBackground = RemoveBackground(tod, rms, x, y, sampleRate=50, cutoff=1.)
         tod -= todBackground
     except (ValueError, IndexError):
         tod -= np.nanmedian(tod)
 
+    
 
     # Create map of data centred on 0,0
     ms, hits = Mapping.MakeMapSimple(tod, x, y, wcs)
@@ -143,7 +157,7 @@ def FitTOD(tod, ra, dec, clon, clat, cpang,
     
     if isinstance(x0, type(None)):
         print('No peak found')
-        return None, None, None, None
+        return badval
 
     # Just select the near data and updated peak location
     # Probably should add some way of not having these be hardcoded...
@@ -155,7 +169,7 @@ def FitTOD(tod, ra, dec, clon, clat, cpang,
     plotselect = (r < 45./60.)
 
     if np.sum(fitselect) < 20:
-        return None, None, None, None
+        return badval
         
     fitdata = tod[fitselect]
     fitra   = x[fitselect]
@@ -179,7 +193,6 @@ def FitTOD(tod, ra, dec, clon, clat, cpang,
     Pest = np.mean(samples, axis=0)
     Pstd = np.std(samples, axis=0)
 
-
     chi2 = np.sum((fitdata-Gauss2d2FWHM(Pest, fitra, fitdec, 0,0))**2/rms**2)/(fitdata.size-len(Pest))
     if not isinstance(plotDir, type(None)):
         pyplot.plot(fitdata, label='data')
@@ -191,16 +204,16 @@ def FitTOD(tod, ra, dec, clon, clat, cpang,
         pyplot.title(' {}'.format(prefix))
         pyplot.savefig('{}/PeakFits_{}.png'.format(plotDir, prefix), bbox_inches='tight')
         pyplot.clf()
-        fig = corner.corner(samples)
-        pyplot.title('{}'.format(prefix))
-        pyplot.savefig('{}/Corner_{}.png'.format(plotDir, prefix), bbox_inches='tight')
-        pyplot.clf()
-        del fig
+        #fig = corner.corner(samples)
+        #pyplot.title('{}'.format(prefix))
+        #pyplot.savefig('{}/Corner_{}.png'.format(plotDir, prefix), bbox_inches='tight')
+        #pyplot.clf()
+        #del fig
 
     # Normalise by rms
     if normalize:
-        #tod /= np.min(rms)
         ms /= Pest[0]
     # Output fits + sample of peak crossing
     cross = np.argmax(Gauss2d2FWHM(Pest, x, y, 0,0))
-    return Pest, Pstd, cross, ms, hits,Gauss2d2FWHM(Pest, xr, yr, 0,0)
+
+    return Pest, Pstd, cross, ms, hits,Gauss2d2FWHM([1., Pest[1],Pest[2], Pest[3], Pest[4], 0] , xr, yr, 0,0)*outweight
