@@ -29,6 +29,13 @@ import sys
 from pipeline.Tools import FileTools
 
 
+# PIXEL INFORMATION TAKEN FROM JAMES' MEMO ON WIKI
+p = 0.1853 # arcmin mm^-1, inverse of effective focal length
+
+theta = np.pi/2.
+Rot = np.array([[np.cos(theta), -np.sin(theta)],
+                [-np.sin(theta),-np.cos(theta)]])
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -58,11 +65,18 @@ if __name__ == "__main__":
     dataDir = Parameters.get('Inputs', 'dataDir')
 
     # Which pixels and sidebands?
-    pixMap = {1:0, 12:1}
     pixels = json.loads(Parameters.get('Inputs', 'pixels'))
-    pixels = np.array([pixMap[p] for p in pixels]) # put the pixels into data order
+    feedpositions = np.loadtxt(Parameters.get('Inputs', 'pixelPositions'), ndmin=1)
+    pixelOffsets, c = {},0
+
+    for k, f in enumerate(feedpositions):
+        if f[0] in pixels:
+            pixelOffsets[f[0]] = [c, (Rot.dot(f[1:,np.newaxis])).flatten()/60.*p, k]
+            c += 1
+    pixelIDs  = np.sort([d[-1] for k, d in pixelOffsets.iteritems()])
     sidebands = json.loads(Parameters.get('Inputs', 'sidebands'))
-    print(sidebands)
+
+
     # What is the source being observed?
     source = Parameters.get('Inputs', 'source')
 
@@ -70,7 +84,6 @@ if __name__ == "__main__":
     # What is the lon and lat of the telescope?
     lon = Parameters.getfloat('Telescope', 'lon')
     lat = Parameters.getfloat('Telescope', 'lat')
-    # alt = ...
     
     # Describe the format of the data:
 
@@ -117,7 +130,11 @@ if __name__ == "__main__":
             obs[last['tod']:last['tod']+this['tod']] = i
             for isideband, sideband in enumerate(sidebands):
                 print (isideband, sidebands)
-                tod[:,sideband,:,last['tod']:last['tod']+this['tod']] = dfile['spectrometer/tod'][pixels, sideband, :, :]
+                temp = dfile['spectrometer/tod'][pixelIDs, sideband, :, :]
+                todDiff = temp[:,:,:temp.shape[-1]//2 * 2:2] - temp[:,:,1:temp.shape[-1]//2 * 2:2]
+                temp = (temp - np.mean(temp,axis=-1)[:,:,np.newaxis])/np.std(todDiff,axis=-1)[:,:,np.newaxis]
+
+                tod[:,sideband,:,last['tod']:last['tod']+this['tod']] = temp
 
             last['tod']   += this['tod'] 
             last['point'] += this['point']
@@ -136,8 +153,8 @@ if __name__ == "__main__":
             filename = filelist[i]
             prefix = filename.split('.')[0]
             if len(prefix.split('/')) > 1:
-                prefix = prefix.split('/')[1]
-
+                prefix = prefix.split('/')[-1]
+            print ('PREFIX {}'.format(prefix))
             print ('READING: {}'.format(filename))
             dfile = h5py.File('{}/{}'.format(dataDir,filename),'r')
             az = dfile['pointing/azActual'][:]
@@ -146,10 +163,14 @@ if __name__ == "__main__":
         
             # Read in TOD info
             mjdTOD = dfile['spectrometer/MJD'][:]
-            tod = dfile['spectrometer/tod'][pixels, :, :, :]
+            tod = dfile['spectrometer/tod'][pixelIDs, :, :, :]
             tod = tod[:, sidebands,:,:]
-            obs = np.zeros(1)
+            obs = np.zeros(tod.shape[-1])
             dfile.close()
+
+        # Normalise the TOD?
+        #todDiff = tod[:,:,:,:tod.shape[-1]//2 * 2:2] - tod[:,:,:,1:tod.shape[-1]//2 * 2:2]
+        #tod = (tod - np.mean(tod,axis=-1)[:,:,:,np.newaxis])/np.std(todDiff,axis=-1)[:,:,:,np.newaxis]
 
         # Split off from here
 
@@ -162,9 +183,12 @@ if __name__ == "__main__":
             doPrecess = True
 
         print('GENERATING POINTING')
-        ra, dec, pang, az, el, mjd = Pointing.GetPointing(az, el, mjd, mjdTOD, pixels, sidebands, precess=doPrecess, lon=lon, lat=lat)
+        ra, dec, pang, az, el, mjd = Pointing.GetPointing(az, el, mjd, mjdTOD, pixelOffsets, sidebands, precess=doPrecess, lon=lon, lat=lat)
         nhorns = ra.shape[0]
 
+        #pyplot.plot(ra[0,:], tod[0,0,0,:])
+       # pyplot.plot(ra[2,:], tod[2,0,0,:])
+       # pyplot.show()
 
         if  source.upper() == 'JUPITER':
             print('HELLO')
@@ -177,9 +201,6 @@ if __name__ == "__main__":
             dist = 0
             r0, d0 = json.loads(Parameters.get('Inputs', 'sourceRADEC'))
 
-        # Calculate the mean az and el of the observation
-        #meanAz, meanEl = Pointing.MeanAzEl(r0, d0, mjd, precess=doPrecess)
-        #dataout['mAzEl'] = np.array([meanAz, meanEl])
 
         # Next check if we want to rotate source frame?
         if Parameters.getboolean('Inputs', 'rotate'):
@@ -217,9 +238,9 @@ if __name__ == "__main__":
         if Parameters.getboolean('Fitting', 'fit'):
             print('FITTING JUPITER IN TOD')
             if Parameters.getboolean('Inputs', 'mergeDatafiles'):
-                Pout, errors, crossings = FitSource.FitTOD(tod, ra, dec, obs, r0, d0, prefix, destripe=True)
+                Pout, errors, crossings = FitSource.FitTOD(tod, ra, dec, obs, r0, d0, pang, prefix, destripe=True)
             else:
-                Pout, errors, crossings = FitSource.FitTOD(tod, ra, dec, obs, r0, d0, prefix, destripe=False)
+                Pout, errors, crossings = FitSource.FitTOD(tod, ra, dec, obs, r0, d0, pang, prefix, destripe=False, mode='mode2')
 
             # Pout, crossings = FitSource.FitTOD(tod, az, el, meanAz, meanEl, prefix)
             print (mjd.shape)
@@ -259,10 +280,51 @@ if __name__ == "__main__":
                 print('MEAN RA: {:.2f}, MEAN DEC: {:.2f}'.format(np.mean(ra), np.mean(dec)))
             
 
+            #pyplot.plot(ra[0,:], dec[0,:])
+            #pyplot.show()
             wcs,_,_ = Mapping.DefineWCS(naxis, cdelt, crval)
+            pix = Mapping.ang2pixWCS(wcs, dec[0,:], ra[0,:]).astype('int')
+            print(tod[0,0,0,:].shape, pix.shape)
+            nhorns = tod.shape[0]
+            nsidebands = tod.shape[1]
+            nchans  = tod.shape[2]
+            m = np.zeros((nhorns, nsidebands, nchans, naxis[0]*naxis[1]))
+            
+
+            # for i in range(nhorns):
+            #    pix = Mapping.ang2pixWCS(wcs, dec[i,:], ra[i,:]).astype('int')#
+
+                
+            #    for j in range(nsidebands):
+            #        for k in range(nchans):
+            #            print(tod.shape, pix.shape, obs.shape)
+            #            m[i,j,k,:],a0 = Mapping.Destripe(tod[i,j,k,:], pix, obs, int(5/0.02), int(naxis[0]*naxis[1]))
+
+            # Merge the horns?
+            pix = Mapping.ang2pixWCS(wcs, dec.flatten(), ra.flatten()).astype('int')
+            for j in range(nsidebands):
+                for k in range(nchans):
+                    print(tod.shape, pix.shape, obs.shape)
+                    todTemp = tod[:,j,k,:].flatten()
+                    obsTemp = np.repeat(obs, tod.shape[0])
+                    m[0,j,k,:],a0 = Mapping.Destripe(todTemp, pix, obsTemp, int(5/0.02), int(naxis[0]*naxis[1]))
+
+            m[m==0] = np.nan
+            m = np.reshape(m, (m.shape[0], m.shape[1], m.shape[2], naxis[0], naxis[1]))
+            m = m[:,:,:,:,::-1]
+            print(m.shape)
+            pyplot.subplot(1,2,1, projection=wcs)
+            pyplot.imshow(m[0,0,0,:,:], origin='lower', aspect='auto') #,(int(naxis[0]), int(naxis[1]) ) ))
+            pyplot.colorbar()
+            pyplot.plot(ra[0,:], dec[0,:], transform=pyplot.gca().get_transform('world'),alpha=0.1,color='r')
+            pyplot.subplot(1,2,2, projection=wcs)
+            pyplot.imshow(m[0,1,0,:,:], origin='lower',aspect='auto') #,(int(naxis[0]), int(naxis[1]) ) ))
+            pyplot.colorbar()
+            pyplot.plot(ra[0,:], dec[0,:], transform=pyplot.gca().get_transform('world'),alpha=0.1,color='r')
+            pyplot.show()
             maps, hits = Mapping.MakeMaps(tod, ra, dec, wcs)
             dataout['hits']  = hits
-            dataout['maps']  = maps
+            dataout['maps']  = m
             dataout['naxis'] = np.array(naxis)
             dataout['cdelt'] = np.array(cdelt)
             dataout['crval'] = np.array(crval)
@@ -270,7 +332,7 @@ if __name__ == "__main__":
 
         sbStr = ''.join(str(e) for e in sidebands)
         hoStr = ''.join(str(e) for e in pixels)
-        FileTools.WriteH5Py('{}/{}_{}_Horns{}_Sidebands{}.h5'.format(Parameters.get('Inputs', 'outputDir'), 
+        FileTools.WriteH5Py('{}/{}_{}_Horns{}_Sidebands{}_merge.h5'.format(Parameters.get('Inputs', 'outputDir'), 
                                                                      Parameters.get('Inputs', 'outputname'),
                                                                      prefix,
                                                                      hoStr,

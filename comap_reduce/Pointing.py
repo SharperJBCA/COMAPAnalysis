@@ -1,4 +1,4 @@
-from pipeline.Observatory.Telescope import Coordinates
+#from pipeline.Observatory.Telescope import Coordinates
 import numpy as np
 from scipy.interpolate import interp1d
 import CartPix
@@ -6,41 +6,11 @@ import EphemNew
 
 import healpy as hp
 
-# PIXEL INFORMATION TAKEN FROM JAMES' MEMO ON WIKI
-p = 0.1853 # arcmin mm^-1, inverse of effective focal length
-
-theta = np.pi/2.
-Rot = np.array([[np.cos(theta), -np.sin(theta)],
-                [-np.sin(theta),-np.cos(theta)]])
-
-pixelOffsets = {0: [0, 0], # pixel 1
-                1: Rot.dot(np.array([-65.00, 112.58])).flatten()} # pixel 12
-pixelOffsets = {0: [0, 0], # pixel 1
-                1: [0, 0]} # pixel 12
-
-pixelOffsets = {0: [0,[0, 0]], # pixel 1
-                2:  [2, Rot.dot(np.array([97.50, 56.29])).flatten()], # Pixel 9
-                3: [3, Rot.dot(np.array([-97.50, 56.29])).flatten()], # Pixel 13
-                5: [5, Rot.dot(np.array([-97.50, -56.29])).flatten()], # Pixel 15
-                12: Rot.dot(np.array([-65.00, 112.58])).flatten()} # pixel 12
-
-
-
-#pixelOffsets = {0: [0,[0, 0]], # pixel 1
-#                1: [1,
-#                2: [2, Rot.dot(np.array([97.50, 56.29])).flatten()], # Pixel 9
-#                3: [3, Rot.dot(np.array([-97.50, 56.29])).flatten()], # Pixel 13
-#                5: [5, Rot.dot(np.array([-97.50, -56.29])).flatten()], # Pixel 15
-#                12: Rot.dot(np.array([-65.00, 112.58])).flatten()} # pixel 12
-
-
-feedpositions = np.loadtxt('COMAP_Feed_Positions.dat')
-pixelOffsets = {k+1: [k, (Rot.dot(f[1:,np.newaxis])).flatten()] for k, f in enumerate(feedpositions)} #k, f enumerate(feedpositions)}
-
 def GetSource(source, lon, lat, mjdtod):
 
     if 'JUPITER' in source.upper():
-        r0, d0, jdia = EphemNew.rdplan(mjdtod, 5,  lon*np.pi/180., lat*np.pi/180.)
+        r0, d0, jdia = EphemNew.rdplan(mjdtod, 5,  
+                                       lon*np.pi/180., lat*np.pi/180.)
         jdist = EphemNew.planet(mjdtod, 5)
         edist = EphemNew.planet(mjdtod, 3)
         rdist = np.sqrt(np.sum((jdist[:3,:] - edist[:3,:])**2,axis=0))
@@ -53,43 +23,38 @@ def GetSource(source, lon, lat, mjdtod):
 
     return r0, d0, dist
 
-
-def GetPointing(_az, _el, mjdp, mjdtod, pixels, sidebands, lon= -118.2941, lat=37.2314, precess=True):
+def GetPointing(_az, _el, mjdp, mjdtod, pixelOffsets, lon= -118.2941, lat=37.2314, precess=True,azoff=0, eloff=0):
     """
     Expects a level 1 COMAP data file and returns ra, dec, az, el and mjd for each pixel
 
     Default lon/lat set to COMAP pathfinder telescope
     """
 
-    #_az, _el, mjdp = dfile['pointing/azActual'][:], dfile['pointing/elActual'][:], dfile['pointing/MJD'][:]
-    #mjdtod =  dfile['spectrometer/MJD'][:]
-    
+    nPix = len(pixelOffsets)
+
     # Need to map pointing MJD to Spectrometer MJD
     amdl = interp1d(mjdp, _az, bounds_error=False, fill_value=0)
     emdl = interp1d(mjdp, _el, bounds_error=False, fill_value=0)
-    print( np.sum(_az), np.sum(_el))
 
     _az, _el = amdl(mjdtod), emdl(mjdtod)
-    #findNan = np.where(np.isnan(_az))[0]
-    #print(findNan)
-    #_az[np.isnan(_az
-    # What pixels are in this data file?
-    #pixels =  np.unique([s[:-1] for s in dfile['spectrometer/pixels']])
-    ra, dec = np.zeros((pixels.size, _az.size)), np.zeros((pixels.size, _az.size))
-    az, el = np.zeros((pixels.size, _az.size)), np.zeros((pixels.size, _az.size))
-    pang = np.zeros((pixels.size, _az.size))
-    # Calculate RA/DEC for each pixel
-    for i, pix in enumerate(pixels):
-        print(pix, pixelOffsets[pix][1])
-        el[i,:] = _el+pixelOffsets[pix][1][1]/60.*p
-        az[i,:] = _az+pixelOffsets[pix][1][0]/60.*p/np.cos(el[i,:]*np.pi/180.)
-        ra[i,:], dec[i,:] = Coordinates._hor2equ(az[i,:],
-                                                 el[i,:],
-                                                 mjdtod[:]+2400000.5,
-                                                 lat,
-                                                 lon,precess=precess)
-        pang[i,:] = Coordinates._pang(el[i,:], dec[i,:], lat)
 
+    # What pixels are in this data file?
+    ra, dec = np.zeros((nPix, _az.size)), np.zeros((nPix, _az.size))
+    az, el = np.zeros((nPix, _az.size)), np.zeros((nPix, _az.size))
+    pang = np.zeros((nPix, _az.size))
+    # Calculate RA/DEC for each pixel
+    for k ,pix in pixelOffsets.items():
+        i = int(pix[0])
+        #print(k,i,pix)
+        el[i,:] = _el+pix[1][1] - eloff
+        az[i,:] = _az+pix[1][0]/np.cos(el[i,:]*np.pi/180.) - azoff # azimuth correction of 4.25 arcmin
+        ra[i,:], dec[i,:] = EphemNew.h2e(az[i,:]*np.pi/180., el[i,:]*np.pi/180., mjdtod, lon*np.pi/180., lat*np.pi/180.)
+        if precess:
+            EphemNew.precess(ra[i,:], dec[i,:], mjdtod)
+        #pang[i,:] = Coordinates._pang(el[i,:], dec[i,:]*180./np.pi, lat)
+    
+    ra *= 180./np.pi
+    dec *= 180./np.pi
     return ra, dec, pang, az, el, mjdtod
 
 def MeanAzEl(r0, d0, mjd, lon= -118.2941, lat=37.2314, precess=True):
@@ -98,7 +63,6 @@ def MeanAzEl(r0, d0, mjd, lon= -118.2941, lat=37.2314, precess=True):
     maz, mel  = Coordinates._equ2hor(np.repeat([r0], mjd.size),
                                      np.repeat([d0], mjd.size),
                                      mjd + 2400000.5,
-                                     #np.array([meanmjd])+2400000.5,
                                      lat,
                                      lon, precess=precess)
 
